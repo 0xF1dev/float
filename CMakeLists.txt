@@ -18,15 +18,31 @@ add_compile_options(
         -fno-ident
         -ffunction-sections
         -fdata-sections
+        -fomit-frame-pointer
+        -fno-exceptions
+        -fno-plt
+        -fmerge-all-constants
+        -fcf-protection=none
+        -mno-red-zone
+        -falign-functions=1
+        -falign-jumps=1
+        -falign-loops=1
+        -falign-labels=1
+        -flto
 )
 add_link_options(
         -nostdlib
+        -Wl,-e,_start
         -Wl,--gc-sections
         -Wl,--strip-all
         -Wl,-build-id=none
+        -flto
         -Wl,-z,max-page-size=16
         -Wl,-z,common-page-size=16
+        -Wl,-z,noseparate-code
         -Wl,--no-dynamic-linker
+        -Wl,-N
+        -Wl,--no-ld-generated-unwind-info
 )
 
 add_executable(float main.c
