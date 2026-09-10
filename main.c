@@ -129,26 +129,21 @@ static void handle_request(long epfd, long ev, int fd, struct config *config, lo
 
     if (ev & EPOLLIN) {
         char req_buf[4096];
-        long tot_read = 0;
 
-        while (tot_read < 4095) {
-            long read = syscall3(0, fd, (long) req_buf + tot_read, 4095 - tot_read);
-            if (read < 0 && read != -11) {
-                print("Could not read request.\n");
-                goto close;
-            }
-            if (read == 0) {
-                print("Request done.\n");
-                goto close;
-            }
-
-            tot_read += read;
-            req_buf[tot_read] = '\0';
-
-            if (headers_done(req_buf)) {
-                break;
-            }
+        long read = syscall3(0, fd, (long) req_buf, 4096);
+        if (read < 0 && read != -11) {
+            print("Could not read request.\n");
+            goto close;
         }
+        if (read == 0) {
+            print("Request done.\n");
+            goto close;
+        }
+
+        req_buf[read] = '\0';
+
+        if (!headers_done(req_buf)) goto close;
+
 
         char *lines[64];
         long count = split(req_buf, '\n', lines, 64);
@@ -231,10 +226,18 @@ static void handle_request(long epfd, long ev, int fd, struct config *config, lo
 
         strappend(res, 4096, "\r\n\r\n");
 
-        long bytes = syscall3(1, fd, (long) res, (long) strlen(res));
-        if (bytes < 0) {
+        // long bytes = syscall3(1, fd, (long) res, (long) strlen(res));
+        // if (bytes < 0) {
+        //     print("Could not send headers.");
+        // }
+
+        print("here\n");
+        long sent = syscall6(44, fd, (long) &res, (long) strlen(res), MSG_MORE | MSG_NOSIGNAL, 0, 0);
+        if (sent < 0) {
             print("Could not send headers.");
+            goto close;
         }
+        print("no more\n");
 
         if (file_path != NULL) {
             long file_fd = syscall3(2, (long) file_path, 0, 0);

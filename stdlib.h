@@ -7,6 +7,9 @@
 #define IPPROTO_TCP 6
 #define TCP_NODELAY 1
 
+#define MSG_MORE 0x8000
+#define MSG_NOSIGNAL 0x4000
+
 #define AT_FDCWD (-100)
 
 #define NULL ((void *)0)
@@ -86,5 +89,7 @@ void print_number(const long num, const int newline);
 long syscall3(long num, long arg1, long arg2, long arg3);
 
 long syscall5(long num, long arg1, long arg2, long arg3, long arg4, long arg5);
+
+long syscall6(long num, long arg1, long arg2, long arg3, long arg4, long arg5, long arg6);
 
 #endif //FLOAT_STDLIB_H
