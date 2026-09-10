@@ -96,7 +96,7 @@ static long match_route(const struct route *routes, const long routes_count, con
 
     for (long i = 0; i < routes_count; i++) {
         if (strcmp(routes[i].route, route) == 0) {
-            method_not_allowed = 1;
+            return i;
         }
     }
 
@@ -120,11 +120,158 @@ static char *find_error_page(const struct error *errors, const long errors_count
     for (long i = 0; i < errors_count; i++) {
         if (errors[i].code == error) return errors[i].path;
     }
-    return "";
+    return NULL;
 }
+
+static void handle_request(long epfd, long ev, int fd, struct config *config, long routes_count, long errors_count,
+                           struct sockaddr_in addr) {
+    if (ev & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) goto close;
+
+    if (ev & EPOLLIN) {
+        char req_buf[4096];
+        long tot_read = 0;
+
+        while (tot_read < 4095) {
+            long read = syscall3(0, fd, (long) req_buf + tot_read, 4095 - tot_read);
+            if (read < 0 && read != -11) {
+                print("Could not read request.\n");
+                goto close;
+            }
+            if (read == 0) {
+                print("Request done.\n");
+                goto close;
+            }
+
+            tot_read += read;
+            req_buf[tot_read] = '\0';
+
+            if (headers_done(req_buf)) {
+                break;
+            }
+        }
+
+        char *lines[64];
+        long count = split(req_buf, '\n', lines, 64);
+
+        int should_close = 0;
+        for (int i = 0; i < count; i++) {
+            if (contains(lines[i], "Connection: close")) {
+                should_close = 1;
+            }
+        }
+
+        char *params[3];
+        split(lines[0], ' ', params, 3);
+
+        int response_status = 200;
+
+        if (contains(params[1], "../")) {
+            response_status = 400;
+            goto response;
+        }
+
+        if (strcmp(params[0], "GET") == 1) {
+            response_status = 405;
+            goto response;
+        }
+
+        long route = match_route(config->routes, routes_count, params[1]);
+        char *file_path = NULL;
+        if (route == -1) {
+            response_status = 404;
+            file_path = find_error_page(config->errors, errors_count, response_status);
+        } else if (route == -2) {
+            response_status = 405;
+            file_path = find_error_page(config->errors, errors_count, response_status);
+        } else {
+            file_path = config->routes[route].path;
+        }
+        struct statx data;
+        data.stx_size = 0;
+
+        if (file_path != NULL) {
+            long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
+            if (statx_ret < 0) {
+                print("Could not get file info.\n");
+            }
+        }
+
+        char file_size[32];
+        itoa((long) data.stx_size, file_size, 32);
+
+    response:
+        print("[");
+        print_number(response_status, 0);
+        print(" ");
+        print(params[1]);
+        print("] Received request\n");
+        static char res[4096];
+        strcpy("HTTP/1.1 ", res, 4096);
+        if (response_status == 200) {
+            strappend(res, 4096, "200 Ok");
+        } else if (response_status == 405) {
+            strappend(res, 4096, "405 Method Not Allowed");
+        } else if (response_status == 404) {
+            strappend(res, 4096, "404 Not Found");
+        } else if (response_status == 400) {
+            strappend(res, 4096, "400 Bad Request");
+        }
+        if (file_path != NULL) {
+            strappend(res, 4096, "\nContent-Type: ");
+            strappend(res, 4096, infer_mimetype(file_path));
+            strappend(res, 4096, "\nContent-Length: ");
+            strappend(res, 4096, file_size);
+        }
+
+        if (response_status != 200) should_close = 1;
+
+        if (should_close) {
+            strappend(res, 4096, "\nConnection: close");
+        }
+
+        strappend(res, 4096, "\r\n\r\n");
+
+        long bytes = syscall3(1, fd, (long) res, (long) strlen(res));
+        if (bytes < 0) {
+            print("Could not send headers.");
+        }
+
+        if (file_path != NULL) {
+            long file_fd = syscall3(2, (long) file_path, 0, 0);
+            if (file_fd < 0) {
+                print("Could not open file.");
+                goto close;
+            }
+            long offset = 0;
+            long send_ret = syscall5(40, fd, file_fd, (long) &offset, (long) data.stx_size, 0);
+            if (send_ret < 0) {
+                print("Could not send file.");
+                goto close;
+            }
+        }
+
+        if (!should_close) return;
+    }
+
+close:
+    long epoll_del = syscall5(233, epfd, EPOLL_CTL_DEL, fd, ev, 0);
+    if (epoll_del < 0) {
+        print("Could not remove epoll: ");
+        print_number(epoll_del, 1);
+    }
+    long close_ret = syscall3(3, fd, 0, 0);
+    if (close_ret < 0) {
+        print("Could not close connection.\n");
+    }
+}
+
 
 void _start(void) {
     print("Initializing float server...\n");
+
+    // block SIGPIPE
+    unsigned long mask = (1ULL << (13 - 1));
+    syscall5(14, 0, (long) &mask, 0, 8, 0);
 
     unsigned short port = get_port();
 
@@ -148,6 +295,17 @@ void _start(void) {
     long routes_count = config_ret >> 32;
     long errors_count = (config_ret << 32) >> 32;
 
+    print("Routes:\n");
+    for (int i = 0; i < routes_count; i++) {
+        if (i != routes_count - 1) {
+            print("  ├ ");
+        } else {
+            print("  └ ");
+        }
+        print(config.routes[i].route);
+        print("\n");
+    }
+
     // open socket
     long server_fd = syscall3(41, AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
@@ -155,6 +313,13 @@ void _start(void) {
         goto exit;
     }
 
+    // make non blocking
+    int nonblock = 1;
+    long nb_ret = syscall3(72, server_fd, 4, O_NONBLOCK);
+    if (nb_ret < 0) {
+        print("Could not make socket non-blocking.\n");
+        goto exit;
+    }
 
     // bind to port (needs the port to be little-endian)
     struct sockaddr_in addr = {0};
@@ -163,8 +328,6 @@ void _start(void) {
     addr.sin_port = (port << sizeof(port) * 4) | (port >> sizeof(port) * 4);
     addr.sin_addr = 0;
 
-    long size = sizeof(addr);
-
     int optval = 1;
     long sockopt_ret = syscall5(54, server_fd, SOL_SOCKET, 2, (long) &optval, sizeof(optval));
     // avoids EADDRINUSE error
@@ -172,6 +335,8 @@ void _start(void) {
         print("Could not set option.\n");
         goto exit;
     }
+
+    long size = sizeof(addr);
 
     long bind_ret = syscall3(49, server_fd, (long) &addr, size); // bind to port 8080
     if (bind_ret < 0) {
@@ -184,144 +349,58 @@ void _start(void) {
         goto exit;
     }
 
-    long listen_ret = syscall3(50, server_fd, 128, 0); // listen (backlog of len 128)
+    long epfd = syscall3(291, O_CLOEXEC, 0, 0); // EPOLL_CLOEXEC
+
+    struct epoll_event ev, events[128];
+    ev.events = EPOLLIN;
+    ev.data.fd = (int) server_fd;
+
+    syscall5(233, epfd, EPOLL_CTL_ADD, server_fd, (long) &ev, 0); // 1 = EPOLL_CTL_ADD
+
+    long listen_ret = syscall3(50, server_fd, 512, 0); // listen (backlog of len 512)
     if (listen_ret < 0) {
         print("Could not start listening.\n");
         goto exit;
     }
 
     print("Server started on port ");
-    char port_str[6];
-    itoa(port, port_str, 6);
-    print(port_str);
+    print_number(port, 0);
     print("!\n");
 
     while (1) {
-        long req_fd = syscall3(43, server_fd, (long) &addr, (long) &size);
-        if (req_fd < 0) {
-            print("Could not open request.\n");
-            goto close;
+        long epoll_ret = syscall5(232, epfd, (long) &events, 128, 10000, 0);
+        if (epoll_ret < 0) {
+            print("Could not get epoll events.\n");
+            continue;
         }
 
-        // close cork (prepare response without sending)
-        int cork_optval = 1;
-        syscall5(54, req_fd, IPPROTO_TCP, TCP_CORK, (long) &cork_optval, sizeof(cork_optval));
+        for (long n = 0; n < epoll_ret; ++n) {
+            if (events[n].data.fd == server_fd) {
+                while (1) {
+                    long size_upd = sizeof(addr);
+                    long req_fd = syscall3(43, server_fd, (long) &addr, (long) &size); // accept request
+                    if (req_fd < 0) {
+                        // all requests have been accepted
+                        break;
+                    }
+                    syscall3(72, req_fd, 4, O_NONBLOCK); // make non blocking
 
-        char req_buf[4096];
-        long tot_read = 0;
+                    int flag = 1;
+                    syscall5(54, req_fd, IPPROTO_TCP, TCP_NODELAY, (long) &flag, sizeof(flag));
 
-        while (tot_read < 4095) {
-            long read = syscall3(0, req_fd, (long) req_buf + tot_read, 4095 - tot_read);
-            if (read < 0) {
-                print("Could not read request.\n");
-                goto close;
-            } else if (read == 0) {
-                print("Request done.\n");
-                goto close;
-            }
-
-            tot_read += read;
-            req_buf[tot_read] = '\0';
-
-            if (headers_done(req_buf)) {
-                char *lines[64];
-                split(req_buf, '\n', lines, 64);
-
-                char *params[3];
-                split(lines[0], ' ', params, 3);
-
-                int response_status = 200;
-
-                if (contains(params[1], "../")) {
-                    response_status = 400;
-                    goto response;
+                    ev.events = EPOLLIN | EPOLLRDHUP;
+                    ev.data.fd = (int) req_fd;
+                    long ctl_ret = syscall5(233, epfd, EPOLL_CTL_ADD, req_fd, (long) &ev, 0);
+                    if (ctl_ret < 0) {
+                        print("Could not add epoll.\n");
+                        continue;
+                    }
                 }
-
-                if (strcmp(params[0], "GET") == 1) {
-                    response_status = 405;
-                    goto response;
-                }
-
-                long route = match_route(config.routes, routes_count, params[1]);
-                char *file_path = {0};
-                if (route == -1) {
-                    response_status = 404;
-                    file_path = find_error_page(config.errors, errors_count, response_status);
-                } else if (route == -2) { response_status = 405; } else {
-                    file_path = config.routes[route].path;
-                }
-                struct statx data;
-                data.stx_size = 0;
-
-                long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
-                if (statx_ret < 0) {
-                    print("Could not get file info.\n");
-                }
-
-
-                char file_size[32];
-                itoa((long) data.stx_size, file_size, 32);
-
-            response:
-                print("[");
-                print_number(response_status, 0);
-                print(" ");
-                print(params[1]);
-                print("] Sending response...\n");
-                char res[4096] = "HTTP/1.1 ";
-                if (response_status == 200) {
-                    strappend(res, 4096, "200 Ok");
-                } else if (response_status == 405) {
-                    strappend(res, 4096, "405 Method Not Allowed");
-                } else if (response_status == 404) {
-                    strappend(res, 4096, "404 Not Found");
-                } else if (response_status == 400) {
-                    strappend(res, 4096, "400 Bad Request");
-                }
-                if (file_path != 0) {
-                    strappend(res, 4096, "\nContent-Type: ");
-                    strappend(res, 4096, infer_mimetype(file_path));
-                    strappend(res, 4096, "\nContent-Length: ");
-                    strappend(res, 4096, file_size);
-                }
-
-                strappend(res, 4096, "\nConnection: close");
-                strappend(res, 4096, "\r\n\r\n");
-
-                long bytes = syscall3(1, req_fd, (long) res, (long) strlen(res));
-                if (bytes < 0) {
-                    print("Could not send headers.");
-                }
-
-                if (file_path == 0) {
-                    goto close;
-                }
-
-                long file_fd = syscall3(2, (long) file_path, 0, 0);
-                if (file_fd < 0) {
-                    print("Could not open file.");
-                    char path_str[5];
-                    itoa(file_fd, path_str, 5);
-                    print(path_str);
-                    goto close;
-                }
-                long offset = 0;
-                long send_ret = syscall5(40, req_fd, file_fd, (long) &offset, (long) data.stx_size, 0);
-                if (send_ret < 0) {
-                    print("Could not send file.");
-                    goto close;
-                }
-
-                break;
+            } else {
+                handle_request(epfd, events[n].events, events[n].data.fd, &config, routes_count, errors_count,
+                               addr);
             }
         }
-
-    close:
-        // open cork (sends response)
-        cork_optval = 0;
-        syscall5(54, req_fd, IPPROTO_TCP, TCP_CORK, (long) &cork_optval, sizeof(cork_optval));
-
-        syscall3(3, req_fd, 0, 0);
     }
 
 exit:

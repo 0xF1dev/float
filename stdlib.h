@@ -5,11 +5,23 @@
 #define SOCK_STREAM 1
 #define SOL_SOCKET 1
 #define IPPROTO_TCP 6
-#define TCP_CORK 6
+#define TCP_NODELAY 1
 
 #define AT_FDCWD (-100)
 
 #define NULL ((void *)0)
+
+#define O_CLOEXEC  02000000
+
+#define EPOLL_CTL_ADD 1
+#define EPOLL_CTL_DEL 2
+
+#define EPOLLIN 0x001
+#define EPOLLERR 0x008
+#define EPOLLHUP 0x010
+#define EPOLLRDHUP 0x2000
+
+#define O_NONBLOCK 04000
 
 struct sockaddr_in {
     unsigned short sin_family;
@@ -18,6 +30,7 @@ struct sockaddr_in {
     unsigned char zero[8];
 };
 
+// https://git.musl-libc.org/cgit/musl/tree/include/sys/stat.h
 struct statx {
     unsigned int stx_mask;
     unsigned int stx_blksize;
@@ -30,6 +43,19 @@ struct statx {
     unsigned long long stx_ino;
     unsigned long long stx_size;
 };
+
+// https://git.musl-libc.org/cgit/musl/tree/include/sys/epoll.h
+typedef union epoll_data {
+    void *ptr;
+    int fd;
+    long u32;
+    long long u64;
+} epoll_data_t;
+
+struct epoll_event {
+    long events;
+    epoll_data_t data;
+} __attribute__((__packed__));
 
 unsigned long strlen(const char *str);
 
