@@ -51,6 +51,29 @@ int itoa(long num, char *buf, const long buf_size) {
     return (int) i;
 }
 
+long atoi(char *str) {
+    char *start = str;
+    char *end = str + strlen(str) - 1;
+
+    while (start < end) {
+        char temp = *start;
+        *start = *end;
+        *end = temp;
+        start++;
+        end--;
+    }
+
+    long num = 0;
+    int count = 1;
+    while (*str != '\0') {
+        num += (*str - 48) * count;
+        count *= 10;
+        str++;
+    }
+
+    return num;
+}
+
 long strappend(char *dest, const long dest_size, const char *src) {
     if (strlen(dest) + strlen(src) + 1 > dest_size) return -1;
 
@@ -87,6 +110,46 @@ long split(char *str, char delimiter, char **tokens, long max_tokens) {
     return count;
 }
 
+long split_null(char *str, long str_len, char **tokens, long max_tokens) {
+    if (!str || max_tokens == 0) return 0;
+
+    char *buf = str;
+    char *end = str + str_len;
+
+    long count = 0;
+    int in_token = 0;
+
+    while (count < max_tokens && buf < end) {
+        if (*buf == '\0') {
+            in_token = 0;
+        } else if (!in_token) {
+            tokens[count++] = buf;
+            in_token = 1;
+        }
+        buf++;
+    }
+
+    return count;
+}
+
+int contains(const char *str, const char *token) {
+    if (*token == '\0') return 1;
+    while (*str != '\0') {
+        const char *h = str;
+        const char *t = token;
+
+        while (*h != '\0' && *t != '\0' && *h == *t) {
+            h++;
+            t++;
+        }
+
+        if (*t == '\0') return 1;
+
+        str++;
+    }
+    return 0;
+}
+
 void strcpy(const char *src, char *dest, long max_len) {
     if (max_len == 0) return;
 
@@ -105,6 +168,16 @@ int strcmp(const char *s1, const char *s2) {
         s2++;
     }
     return (unsigned char) *s1 - (unsigned char) *s2;
+}
+
+int startswith(const char *str, const char *prefix) {
+    while (*prefix != '\0') {
+        if (*str != *prefix) return 0;
+        str++;
+        prefix++;
+    }
+
+    return 1;
 }
 
 int endswith(const char *str, const char *suffix) {
@@ -137,6 +210,15 @@ long print(const char *msg) {
     );
 
     return ret;
+}
+
+void print_number(const long num, const int newline) {
+    char num_buf[11];
+    itoa(num, num_buf, 11);
+    print(num_buf);
+    if (newline) {
+        print("\n");
+    }
 }
 
 long syscall3(long num, long arg1, long arg2, long arg3) {

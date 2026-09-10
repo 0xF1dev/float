@@ -19,12 +19,12 @@ struct sockaddr_in {
 };
 
 struct statx {
-    unsigned int   stx_mask;
-    unsigned int   stx_blksize;
+    unsigned int stx_mask;
+    unsigned int stx_blksize;
     unsigned long long stx_attributes;
-    unsigned int   stx_nlink;
-    unsigned int   stx_uid;
-    unsigned int   stx_gid;
+    unsigned int stx_nlink;
+    unsigned int stx_uid;
+    unsigned int stx_gid;
     unsigned short stx_mode;
     unsigned short _pad1[1];
     unsigned long long stx_ino;
@@ -35,17 +35,27 @@ unsigned long strlen(const char *str);
 
 int itoa(long num, char *buf, long buf_size);
 
+long atoi(char *str);
+
 long strappend(char *dest, long dest_size, const char *src);
 
 long split(char *str, char delimiter, char **tokens, long max_tokens);
+
+long split_null(char *str, long str_len, char **tokens, long max_tokens);
+
+int contains(const char *str, const char *token);
 
 void strcpy(const char *src, char *dest, long max_len);
 
 int strcmp(const char *s1, const char *s2);
 
+int startswith(const char *str, const char *prefix);
+
 int endswith(const char *str, const char *suffix);
 
 long print(const char *msg);
+
+void print_number(const long num, const int newline);
 
 long syscall3(long num, long arg1, long arg2, long arg3);
 

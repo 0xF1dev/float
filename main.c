@@ -1,16 +1,52 @@
 #include "stdlib.h"
 
-#define PORT 8080
-
-enum methods {
-    GET,
-};
+#define DEFAULT_PORT 8080
 
 struct route {
-    enum methods method;
     char route[128];
     char path[256];
 };
+
+struct error {
+    int code;
+    char *path;
+};
+
+struct config {
+    struct route routes[256];
+    struct error errors[64];
+};
+
+static unsigned short get_port() {
+    const long fd = syscall3(2, (long) "/proc/self/environ", 0, 0);
+    if (fd < 0) {
+        print("Could not get environment variables, using port 8080.\n");
+        return DEFAULT_PORT;
+    }
+
+    char buf[8192];
+    const long read_ret = syscall3(0, fd, (long) buf, 8192);
+    if (read_ret < 0) {
+        print("Could not read environment variables, using port 8080.\n");
+        return DEFAULT_PORT;
+    }
+
+    syscall3(3, fd, 0, 0); // close
+
+    char *vars[128];
+    const long count = split_null(buf, read_ret, vars, 128);
+
+    for (int i = 0; i < count; i++) {
+        if (startswith(vars[i], "PORT=")) {
+            char *val[2];
+            if (split(vars[i], '=', val, 2) < 2) return DEFAULT_PORT;
+            const unsigned short port = (unsigned short) atoi(val[1]);
+            return port;
+        }
+    }
+
+    return DEFAULT_PORT;
+}
 
 static int headers_done(const char *buf) {
     const unsigned long len = strlen(buf);
@@ -21,49 +57,56 @@ static int headers_done(const char *buf) {
     return 0;
 }
 
-static long parse_routes(char *config, struct route *routes) {
+static long long parse_config(char *config_file, struct config *config) {
     char *entries[512];
-    const long count = split(config, '\n', entries, 1024);
+    const long count = split(config_file, '\n', entries, 1024);
+
+    long routes = 0;
+    long errors = 0;
 
     for (long i = 0; i < count; i++) {
         char *data[3];
         split(entries[i], ';', data, 3);
         if (strcmp(data[0], "GET") == 0) {
-            routes[i].method = GET;
+            strcpy(data[1], config->routes[i].route, (long) strlen(data[1]) + 1);
+            strcpy(data[2], config->routes[i].path, (long) strlen(data[2]) + 1);
+            strappend(config->routes[i].path, sizeof(config->routes[i].path), "\0");
+            routes++;
+        } else if (strcmp(data[0], "ERROR") == 0) {
+            config->errors[errors].code = atoi(data[1]);
+            config->errors[errors].path = data[2];
+            errors++;
         } else {
             print("Unsupported method: ");
             print(data[0]);
             print("\n");
             return -1;
         }
-        strcpy(data[1], routes[i].route, (long) strlen(data[1]) + 1);
-        strcpy(data[2], routes[i].path, (long) strlen(data[2]) + 1);
-        strappend(routes[i].path, sizeof(routes[i].path), "\0");
     }
 
-    return count;
+    long long ret = routes;
+    ret <<= 32;
+    ret += errors;
+
+    return ret;
 }
 
-static long match_route(struct route *routes, long routes_count, char *route, enum methods method) {
+static long match_route(const struct route *routes, const long routes_count, const char *route) {
     int method_not_allowed = 0;
 
     for (long i = 0; i < routes_count; i++) {
         if (strcmp(routes[i].route, route) == 0) {
-            if (routes[i].method == method) {
-                return i;
-            }
             method_not_allowed = 1;
         }
     }
 
     if (method_not_allowed) {
-        return -2;
+        return -2; // 405
     }
     return -1; // 404
 }
 
 static char *infer_mimetype(const char *filename) {
-    print(filename);
     if (endswith(filename, ".html")) {
         return "text/html";
     }
@@ -73,12 +116,17 @@ static char *infer_mimetype(const char *filename) {
     return "application/octet-stream";
 }
 
-void _start(void) {
-    if (endswith("../styles.css", ".css")) {
-        print("what");
+static char *find_error_page(const struct error *errors, const long errors_count, const int error) {
+    for (long i = 0; i < errors_count; i++) {
+        if (errors[i].code == error) return errors[i].path;
     }
+    return "";
+}
 
+void _start(void) {
     print("Initializing float server...\n");
+
+    unsigned short port = get_port();
 
     // read config
     char *path = "../routes.conf";
@@ -88,15 +136,17 @@ void _start(void) {
         goto exit;
     }
 
-    char config[4096];
-    long config_read = syscall3(0, conf_fd, (long) config, 4096);
+    char config_buf[4096];
+    long config_read = syscall3(0, conf_fd, (long) config_buf, 4096);
     if (config_read < 0) {
         print("Could not read config.");
         goto exit;
     }
 
-    struct route routes[256];
-    long routes_count = parse_routes(config, routes);
+    struct config config;
+    long long config_ret = parse_config(config_buf, &config);
+    long routes_count = config_ret >> 32;
+    long errors_count = (config_ret << 32) >> 32;
 
     // open socket
     long server_fd = syscall3(41, AF_INET, SOCK_STREAM, 0);
@@ -105,11 +155,12 @@ void _start(void) {
         goto exit;
     }
 
-    // bind to port 8080
+
+    // bind to port (needs the port to be little-endian)
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
-    char msb = PORT >> 8;
-    addr.sin_port = (PORT << 8) | msb;
+    // sizeof returns size in bits, so *4 is equivalent to * 8 / 2 (it has to shift the bits by half of the num's size)
+    addr.sin_port = (port << sizeof(port) * 4) | (port >> sizeof(port) * 4);
     addr.sin_addr = 0;
 
     long size = sizeof(addr);
@@ -140,8 +191,8 @@ void _start(void) {
     }
 
     print("Server started on port ");
-    char port_str[5];
-    itoa(PORT, port_str, 5);
+    char port_str[6];
+    itoa(port, port_str, 6);
     print(port_str);
     print("!\n");
 
@@ -181,29 +232,42 @@ void _start(void) {
 
                 int response_status = 200;
 
-                enum methods method = GET;
-                if (strcmp(params[0], "GET") == 0) {
-                    method = GET;
-                } else {
-                    response_status = 405;
+                if (contains(params[1], "../")) {
+                    response_status = 400;
+                    goto response;
                 }
 
-                long route = match_route(routes, routes_count, params[1], method);
-                if (route == -1) { response_status = 404; } else if (route == -2) { response_status = 405; }
-                char *file_path = routes[route].path;
+                if (strcmp(params[0], "GET") == 1) {
+                    response_status = 405;
+                    goto response;
+                }
+
+                long route = match_route(config.routes, routes_count, params[1]);
+                char *file_path = {0};
+                if (route == -1) {
+                    response_status = 404;
+                    file_path = find_error_page(config.errors, errors_count, response_status);
+                } else if (route == -2) { response_status = 405; } else {
+                    file_path = config.routes[route].path;
+                }
                 struct statx data;
                 data.stx_size = 0;
 
-                if (response_status == 200) {
-                    long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
-                    if (statx_ret < 0) {
-                        print("Could not get file info.\n");
-                    }
+                long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
+                if (statx_ret < 0) {
+                    print("Could not get file info.\n");
                 }
+
 
                 char file_size[32];
                 itoa((long) data.stx_size, file_size, 32);
 
+            response:
+                print("[");
+                print_number(response_status, 0);
+                print(" ");
+                print(params[1]);
+                print("] Sending response...\n");
                 char res[4096] = "HTTP/1.1 ";
                 if (response_status == 200) {
                     strappend(res, 4096, "200 Ok");
@@ -211,21 +275,25 @@ void _start(void) {
                     strappend(res, 4096, "405 Method Not Allowed");
                 } else if (response_status == 404) {
                     strappend(res, 4096, "404 Not Found");
+                } else if (response_status == 400) {
+                    strappend(res, 4096, "400 Bad Request");
                 }
-                strappend(res, 4096, "\nContent-Type: ");
-                strappend(res, 4096, infer_mimetype(file_path));
-                strappend(res, 4096, "\nContent-Length: ");
-                strappend(res, 4096, file_size);
-                strappend(res, 4096, "\r\n\r\n");
+                if (file_path != 0) {
+                    strappend(res, 4096, "\nContent-Type: ");
+                    strappend(res, 4096, infer_mimetype(file_path));
+                    strappend(res, 4096, "\nContent-Length: ");
+                    strappend(res, 4096, file_size);
+                }
 
-                print(file_path);
+                strappend(res, 4096, "\nConnection: close");
+                strappend(res, 4096, "\r\n\r\n");
 
                 long bytes = syscall3(1, req_fd, (long) res, (long) strlen(res));
                 if (bytes < 0) {
                     print("Could not send headers.");
                 }
 
-                if (response_status != 200) {
+                if (file_path == 0) {
                     goto close;
                 }
 
@@ -248,11 +316,11 @@ void _start(void) {
             }
         }
 
+    close:
         // open cork (sends response)
         cork_optval = 0;
         syscall5(54, req_fd, IPPROTO_TCP, TCP_CORK, (long) &cork_optval, sizeof(cork_optval));
 
-    close:
         syscall3(3, req_fd, 0, 0);
     }
 
