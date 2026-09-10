@@ -107,11 +107,77 @@ static long match_route(const struct route *routes, const long routes_count, con
 }
 
 static char *infer_mimetype(const char *filename) {
-    if (endswith(filename, ".html")) {
+    if (endswith(filename, ".html") || endswith(filename, ".htm")) {
         return "text/html";
     }
     if (endswith(filename, ".css")) {
         return "text/css";
+    }
+    if (endswith(filename, ".js")) {
+        return "text/javascript";
+    }
+    if (endswith(filename, ".ttf")) {
+        return "font/ttf";
+    }
+    if (endswith(filename, ".otf")) {
+        return "font/otf";
+    }
+    if (endswith(filename, ".webp")) {
+        return "image/webp";
+    }
+    if (endswith(filename, ".svg")) {
+        return "image/svg+xml";
+    }
+    if (endswith(filename, ".jpg") || endswith(filename, ".jpeg")) {
+        return "image/jpeg";
+    }
+    if (endswith(filename, ".pdf")) {
+        return "application/pdf";
+    }
+    if (endswith(filename, ".json")) {
+        return "application/json";
+    }
+    if (endswith(filename, ".mp4")) {
+        return "video/mp4";
+    }
+    if (endswith(filename, ".mp3")) {
+        return "audio/mpeg";
+    }
+    if (endswith(filename, ".avif")) {
+        return "image/avif";
+    }
+    if (endswith(filename, ".xml")) {
+        return "application/xml";
+    }
+    if (endswith(filename, ".zip")) {
+        return "application/zip";
+    }
+    if (endswith(filename, ".tar")) {
+        return "application/x-tar";
+    }
+    if (endswith(filename, ".tar.gz") || endswith(filename, ".tgz")) {
+        return "application/gzip";
+    }
+    if (endswith(filename, ".tar.bz2") || endswith(filename, ".tbz")) {
+        return "application/x-bzip2";
+    }
+    if (endswith(filename, ".tar.xz") || endswith(filename, ".txz")) {
+        return "application/x-xz";
+    }
+    if (endswith(filename, ".txt")) {
+        return "text/plain";
+    }
+    if (endswith(filename, ".docx")) {
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    }
+    if (endswith(filename, ".csv")) {
+        return "text/csv";
+    }
+    if (endswith(filename, ".pptx")) {
+        return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    }
+    if (endswith(filename, ".xlsx")) {
+        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     }
     return "application/octet-stream";
 }
@@ -225,11 +291,6 @@ static void handle_request(long epfd, long ev, int fd, struct config *config, lo
         }
 
         strappend(res, 4096, "\r\n\r\n");
-
-        // long bytes = syscall3(1, fd, (long) res, (long) strlen(res));
-        // if (bytes < 0) {
-        //     print("Could not send headers.");
-        // }
 
         print("here\n");
         long sent = syscall6(44, fd, (long) &res, (long) strlen(res), MSG_MORE | MSG_NOSIGNAL, 0, 0);
