@@ -130,6 +130,9 @@ static char *infer_mimetype(const char *filename) {
     if (endswith(filename, ".js")) {
         return "text/javascript";
     }
+    if (endswith(filename, ".ico")) {
+        return "image/vnd.microsoft.icon";
+    }
     if (endswith(filename, ".ttf")) {
         return "font/ttf";
     }
