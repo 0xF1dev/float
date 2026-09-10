@@ -26,6 +26,9 @@
 
 #define O_NONBLOCK 04000
 
+#define S_IFDIR 0040000
+#define S_IFMT 0170000
+
 struct sockaddr_in {
     unsigned short sin_family;
     unsigned short sin_port;
