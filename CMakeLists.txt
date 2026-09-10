@@ -50,3 +50,5 @@ add_executable(float main.c
         stdlib.h)
 
 target_link_options(float PRIVATE -T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld)
+
+add_custom_command(TARGET float POST_BUILD COMMAND sstrip "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}" COMMENT "Stripping executable")
