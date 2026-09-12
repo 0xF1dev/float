@@ -124,6 +124,8 @@ static long long parse_config(char *config_file, struct config *config) {
                 return -1;
             }
             if ((info.stx_mode & S_IFMT) == S_IFDIR) {
+                if (endswith(data[1], "/")) data[1][strlen(data[1]) - 1] = '\0';
+                if (endswith(data[2], "/")) data[2][strlen(data[2]) - 1] = '\0';
                 config->directories[config->dir_len].prefix = data[1];
                 config->directories[config->dir_len].path = data[2];
                 config->dir_len++;
