@@ -198,6 +198,12 @@ static char *infer_mimetype(const char *filename) {
     if (endswith(filename, ".ttf")) {
         return "font/ttf";
     }
+    if (endswith(filename, ".woff")) {
+        return "font/woff";
+    }
+    if (endswith(filename, ".woff2")) {
+        return "font/woff2";
+    }
     if (endswith(filename, ".otf")) {
         return "font/otf";
     }
