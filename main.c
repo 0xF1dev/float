@@ -2,6 +2,7 @@
 
 #define DEFAULT_PORT 8080
 #define DEFAULT_CONFIG "routes.conf"
+#define DEFAULT_WORKERS 4
 
 struct file {
     char *ptr;
@@ -56,8 +57,7 @@ static unsigned short get_port() {
         if (startswith(vars[i], "PORT=")) {
             char *val[2];
             if (split(vars[i], '=', val, 2) < 2) return DEFAULT_PORT;
-            const unsigned short port = (unsigned short) atoi(val[1]);
-            return port;
+            return atoi(val[1]);
         }
     }
 
@@ -92,6 +92,36 @@ static char *get_config_path() {
     }
 
     return DEFAULT_CONFIG;
+}
+
+static unsigned int get_workers() {
+    const long fd = syscall3(2, (long) "/proc/self/environ", O_RDONLY, 0);
+    if (fd < 0) {
+        print("Could not get environment variables, using config \"routes.conf\".\n");
+        return DEFAULT_WORKERS;
+    }
+
+    char buf[8192];
+    const long read_ret = syscall3(0, fd, (long) buf, 8192);
+    if (read_ret < 0) {
+        print("Could not read environment variables, using config \"routes.conf\".\n");
+        return DEFAULT_WORKERS;
+    }
+
+    syscall3(3, fd, 0, 0); // close
+
+    char *vars[128];
+    const long count = split_null(buf, read_ret, vars, 128);
+
+    for (int i = 0; i < count; i++) {
+        if (startswith(vars[i], "WORKERS=")) {
+            char *val[2];
+            if (split(vars[i], '=', val, 2) < 2) return DEFAULT_WORKERS;
+            return atoi(val[1]);
+        }
+    }
+
+    return DEFAULT_WORKERS;
 }
 
 static int headers_done(const char *buf) {
@@ -542,6 +572,10 @@ void _start(void) {
 
     cache_routes(config.routes, config.routes_len);
 
+    unsigned int workers = get_workers();
+    print("Workers: ");
+    print_number(workers, 1);
+
     print("Routes:\n");
     for (int i = 0; i < config.routes_len; i++) {
         if (i != config.routes_len - 1 || config.dir_len != 0) {
@@ -572,7 +606,7 @@ void _start(void) {
         print_number(config.errors[i].code, 1);
     }
 
-    for (int i = 0; i <= 3; i++) {
+    for (unsigned int i = 0; i < workers; i++) {
         long pid = syscall0(57);
         if (pid == 0) {
             syscall3(157, PR_SET_PDEATHSIG, SIGTERM, 0); // monitor parent process
