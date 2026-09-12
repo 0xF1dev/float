@@ -2,9 +2,15 @@
 
 #define DEFAULT_PORT 8080
 
+struct file {
+    char *ptr;
+    unsigned long long size;
+};
+
 struct route {
     char *route;
     char *path;
+    struct file file;
 };
 
 struct error {
@@ -27,7 +33,7 @@ struct config {
 };
 
 static unsigned short get_port() {
-    const long fd = syscall3(2, (long) "/proc/self/environ", 0, 0);
+    const long fd = syscall3(2, (long) "/proc/self/environ", O_RDONLY, 0);
     if (fd < 0) {
         print("Could not get environment variables, using port 8080.\n");
         return DEFAULT_PORT;
@@ -60,9 +66,7 @@ static unsigned short get_port() {
 static int headers_done(const char *buf) {
     const unsigned long len = strlen(buf);
     if (len < 4) return 0;
-    for (unsigned long i = 0; i < len; i++) {
-        if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') return 1;
-    }
+    if (endswith(buf, "\r\n\r\n")) return 1;
     return 0;
 }
 
@@ -104,6 +108,33 @@ static long long parse_config(char *config_file, struct config *config) {
     return 0;
 }
 
+static void cache_routes(struct route *routes, long routes_len) {
+    for (long i = 0; i < routes_len; i++) {
+        long fd = syscall3(2, (long) routes[i].path, O_RDONLY, 0);
+        if (fd < 0) {
+            print("Could not open file defined in route.\n");
+            print(routes[i].path);
+            print_number(fd, 1);
+            continue;
+        }
+        long statbuf[18]; // statbuf[6] is file size
+        long stat_ret = syscall3(5, fd, (long) &statbuf, 0);
+        if (stat_ret < 0) {
+            print("Could not get file info.\n");
+            continue;
+        }
+        char *mmap_ret = (char *) syscall6(9, 0, statbuf[6], PROT_READ, MAP_SHARED, fd, 0);
+        if (mmap_ret == MAP_FAILED || mmap_ret == NULL) {
+            print("Could not allocate file.\n");
+            syscall3(1, fd, 0, 0);
+            continue;
+        }
+        routes[i].file.ptr = mmap_ret;
+        routes[i].file.size = statbuf[6];
+        syscall3(3, fd, 0, 0);
+    }
+}
+
 static long match_route(const struct config *config, const char *route) {
     for (long i = 0; i < config->routes_len; i++) {
         if (strcmp(config->routes[i].route, route) == 0) {
@@ -122,7 +153,7 @@ static long match_route(const struct config *config, const char *route) {
 
 static char *infer_mimetype(const char *filename) {
     if (endswith(filename, ".html") || endswith(filename, ".htm")) {
-        return "text/html";
+        return "text/html; charset=utf-8";
     }
     if (endswith(filename, ".css")) {
         return "text/css";
@@ -199,6 +230,36 @@ static char *infer_mimetype(const char *filename) {
     return "application/octet-stream";
 }
 
+static long generate_headers(char *buf, char *route, const int status, const char *filename, const char *file_size,
+                             int should_close) {
+    long written = 9;
+    strcpy("HTTP/1.1 ", buf, 2048);
+    if (status == 200) {
+        written += strappend(buf, 2048, "200 Ok");
+    } else if (status == 405) {
+        written += strappend(buf, 2048, "405 Method Not Allowed");
+    } else if (status == 404) {
+        written += strappend(buf, 2048, "404 Not Found");
+    } else if (status == 400) {
+        written += strappend(buf, 2048, "400 Bad Request");
+    }
+    if (filename != NULL && (strcmp(infer_mimetype(route), "text/html; charset=utf-8") == 0 || strcmp(infer_mimetype(route), "application/octet-stream") == 0)) {
+        written += strappend(buf, 2048, "\nContent-Type: ");
+        written += strappend(buf, 2048, infer_mimetype(filename));
+        written += strappend(buf, 2048, "\nContent-Length: ");
+        written += strappend(buf, 2048, file_size);
+    }
+    if (status != 200) should_close = 1;
+
+    if (should_close) {
+        written += strappend(buf, 2048, "\nConnection: close");
+    }
+
+    written += strappend(buf, 2048, "\r\n\r\n");
+
+    return written;
+}
+
 static char *find_error_page(const struct error *errors, const long errors_count, const int error) {
     for (long i = 0; i < errors_count; i++) {
         if (errors[i].code == error) return errors[i].path;
@@ -206,10 +267,10 @@ static char *find_error_page(const struct error *errors, const long errors_count
     return NULL;
 }
 
-static void handle_request(long epfd, long ev, int fd, struct config *config) {
+static void handle_request(long ev, int fd, struct config *config) {
     if (ev & (EPOLLERR | EPOLLRDHUP | EPOLLHUP)) goto close;
 
-    if (ev & (EPOLLIN)) {
+    if (ev & (EPOLLIN | EPOLLOUT)) {
         char req_buf[4096];
 
         long read = syscall3(0, fd, (long) req_buf, 4096);
@@ -224,8 +285,7 @@ static void handle_request(long epfd, long ev, int fd, struct config *config) {
 
         req_buf[read] = '\0';
 
-        if (!headers_done(req_buf)) goto close;
-
+        if (!headers_done(req_buf)) return;
 
         char *lines[64];
         long count = split(req_buf, '\n', lines, 64);
@@ -253,44 +313,54 @@ static void handle_request(long epfd, long ev, int fd, struct config *config) {
             goto response;
         }
 
+        unsigned long long size = 0;
         long route = match_route(config, params[1]);
+        long file_fd = 0;
         if (route == -1) {
             response_status = 404;
-            file_path = find_error_page(config->errors, config->errors_len, response_status);
+            if (strcmp(infer_mimetype(params[1]), "text/html; charset=utf-8") == 0 || strcmp(infer_mimetype(params[1]), "application/octet-stream") == 0) {
+                file_path = find_error_page(config->errors, config->errors_len, response_status);
+            }
         } else if (route == -2) {
             response_status = 405;
             file_path = find_error_page(config->errors, config->errors_len, response_status);
         } else {
             if (route >= 1073741824) {
                 // to differentiate normal routes with directory routes
-                route -= 1073741824;
-                file_path = config->directories[route].path;
-                strappend(file_path, 256, params[1] + strlen(config->directories[route].prefix));
+                file_path = config->directories[route - 1073741824].path;
+                strappend(file_path, 256, params[1] + strlen(config->directories[route - 1073741824].prefix));
+
+                struct statx data;
+                data.stx_size = 0;
+
+                if (file_path != NULL) {
+                file_info:
+                    const long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
+                    if (statx_ret < 0) {
+                        print("Could not stat file: ");
+                        print_number(statx_ret, 1);
+                        response_status = 404;
+                        file_path = find_error_page(config->errors, config->errors_len, 404);
+                        goto file_info;
+                    }
+                    file_fd = syscall3(2, (long) file_path, O_RDONLY, 0);
+                    if (file_fd < 0) {
+                        print("Could not open file: ");
+                        print_number(file_fd, 1);
+                        goto close;
+                    }
+                }
+                size = data.stx_size;
             } else {
                 file_path = config->routes[route].path;
+                size = config->routes[route].file.size;
             }
         }
-        struct statx data;
-        data.stx_size = 0;
 
-        long file_fd;
-        if (file_path != NULL) {
-        file_info:
-            const long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
-            if (statx_ret < 0) {
-                response_status = 404;
-                file_path = find_error_page(config->errors, config->errors_len, 404);
-                goto file_info;
-            }
-            file_fd = syscall3(2, (long) file_path, 0, 0);
-            if (file_fd < 0) {
-                print("Could not open file.");
-                goto close;
-            }
-        }
+        if (response_status != 200) should_close = 1;
 
         char file_size[32];
-        itoa((long) data.stx_size, file_size, 32);
+        itoa((long) size, file_size, 32);
 
     response:
         print("[");
@@ -298,43 +368,48 @@ static void handle_request(long epfd, long ev, int fd, struct config *config) {
         print(" ");
         print(params[1]);
         print("] Received request\n");
-        static char res[2048];
-        strcpy("HTTP/1.1 ", res, 2048);
-        if (response_status == 200) {
-            strappend(res, 2048, "200 Ok");
-        } else if (response_status == 405) {
-            strappend(res, 2048, "405 Method Not Allowed");
-        } else if (response_status == 404) {
-            strappend(res, 2048, "404 Not Found");
-        } else if (response_status == 400) {
-            strappend(res, 2048, "400 Bad Request");
-        }
-        if (file_path != NULL) {
-            strappend(res, 2048, "\nContent-Type: ");
-            strappend(res, 2048, infer_mimetype(file_path));
-            strappend(res, 2048, "\nContent-Length: ");
-            strappend(res, 2048, file_size);
-        }
 
-        if (response_status != 200) should_close = 1;
+        if (route >= 1073741824) {
+            char res[2048] = {0};
+            const long len = generate_headers(res, params[1], response_status, file_path, file_size, should_close);
 
-        if (should_close) {
-            strappend(res, 2048, "\nConnection: close");
-        }
+            long sent = syscall6(44, fd, (long) &res, len, MSG_MORE | MSG_NOSIGNAL, 0, 0);
+            if (sent < 0) {
+                print("Could not send headers.\n");
+                goto close;
+            }
 
-        strappend(res, 2048, "\r\n\r\n");
-
-        long sent = syscall6(44, fd, (long) &res, (long) strlen(res), MSG_MORE | MSG_NOSIGNAL, 0, 0);
-        if (sent < 0) {
-            print("Could not send headers.\n");
-            goto close;
-        }
-
-        if (file_path != NULL) {
             long offset = 0;
-            long send_ret = syscall5(40, fd, file_fd, (long) &offset, (long) data.stx_size, 0);
+            long send_ret = syscall5(40, fd, file_fd, (long) &offset, (long) size, 0);
             if (send_ret < 0) {
                 print("Could not send file.\n");
+                goto close;
+            }
+        } else if (route >= 0) {
+            char res[2048] = {0};
+            const long len = generate_headers(res, params[1], response_status, file_path, file_size, should_close);
+
+            struct iovec iov[2];
+            iov[0].iov_base = res;
+            iov[0].iov_len = len;
+            iov[1].iov_base = config->routes[route].file.ptr;
+            iov[1].iov_len = config->routes[route].file.size;
+
+            const long writev_ret = syscall3(20, fd, (long) iov, 2);
+            if (writev_ret < 0) {
+                print("Could not send response.\n");
+                goto close;
+            }
+            if ((unsigned long long) writev_ret < len + config->routes[route].file.size) {
+                return;
+            }
+        } else {
+            char res[2048] = {0};
+            const long len = generate_headers(res, params[1], response_status, file_path, file_size, should_close);
+
+            const long write_ret = syscall3(1, fd, (long) res, len);
+            if (write_ret < 0) {
+                print("Could not send response.\n");
                 goto close;
             }
         }
@@ -343,17 +418,12 @@ static void handle_request(long epfd, long ev, int fd, struct config *config) {
     }
 
 close:
-    const long epoll_del = syscall5(233, epfd, EPOLL_CTL_DEL, fd, ev, 0);
-    if (epoll_del < 0 && epoll_del != -2) {
-        print("Could not remove epoll: ");
-        print_number(epoll_del, 1);
-    }
     const long close_ret = syscall3(3, fd, 0, 0);
     if (close_ret < 0) {
-        print("Could not close connection.\n");
+        print("Could not close connection: ");
+        print_number(close_ret, 1);
     }
 }
-
 
 void _start(void) {
     print("Initializing float server...\n");
@@ -366,7 +436,7 @@ void _start(void) {
 
     // read config
     char *path = "../routes.conf";
-    long conf_fd = syscall3(2, (long) path, 0, 0);
+    long conf_fd = syscall3(2, (long) path, O_RDONLY, 0);
     if (conf_fd < 0) {
         print("Could not open routes file.\n");
         goto exit;
@@ -386,9 +456,11 @@ void _start(void) {
         goto exit;
     }
 
+    cache_routes(config.routes, config.routes_len);
+
     print("Routes:\n");
     for (int i = 0; i < config.routes_len; i++) {
-        if (i != config.routes_len - 1) {
+        if (i != config.routes_len - 1 || config.dir_len != 0) {
             print("  ├ ");
         } else {
             print("  └ ");
@@ -397,10 +469,55 @@ void _start(void) {
         print("\n");
     }
 
+    for (int i = 0; i < config.dir_len; i++) {
+        if (i != config.dir_len - 1 || config.errors_len != 0) {
+            print("  ├ ");
+        } else {
+            print("  └ ");
+        }
+        print(config.directories[i].prefix);
+        print("/*\n");
+    }
+
+    for (int i = 0; i < config.errors_len; i++) {
+        if (i != config.errors_len - 1) {
+            print("  ├ ");
+        } else {
+            print("  └ ");
+        }
+        print_number(config.errors[i].code, 1);
+    }
+
+    for (int i = 0; i <= 3; i++) {
+        long pid = syscall0(57);
+        if (pid == 0) {
+            syscall3(157, PR_SET_PDEATHSIG, SIGTERM, 0); // monitor parent process
+            goto open_server;
+        };
+    }
+    print("Server started on port ");
+    print_number(port, 0);
+    print("!\n");
+monitor:
+    syscall5(61, -1, (long) NULL, 0, 0, 0); // wait for a child process to die
+    long pid = syscall0(57); // respawn it
+    if (pid != 0) {
+        print("Detected terminated child, respawned.\n");
+        goto monitor;
+    }
+
+open_server:
     // open socket
     long server_fd = syscall3(41, AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         print("Could not open socket.");
+        goto exit;
+    }
+
+    int reuse = 1;
+    long reuse_ret = syscall5(54, server_fd, SOL_SOCKET, SO_REUSEPORT, (long) &reuse, sizeof(reuse));
+    if (reuse_ret < 0) {
+        print("Could not reuse port.\n");
         goto exit;
     }
 
@@ -447,15 +564,11 @@ void _start(void) {
 
     syscall5(233, epfd, EPOLL_CTL_ADD, server_fd, (long) &ev, 0); // 1 = EPOLL_CTL_ADD
 
-    long listen_ret = syscall3(50, server_fd, 4096, 0); // listen (backlog of len 4096)
+    long listen_ret = syscall3(50, server_fd, 8192, 0); // listen (backlog of len 8192)
     if (listen_ret < 0) {
         print("Could not start listening.\n");
         goto exit;
     }
-
-    print("Server started on port ");
-    print_number(port, 0);
-    print("!\n");
 
     while (1) {
         long epoll_ret = syscall5(232, epfd, (long) &events, 128, 10000, 0);
@@ -464,7 +577,7 @@ void _start(void) {
             continue;
         }
 
-        for (long n = 0; n < epoll_ret; ++n) {
+        for (long n = 0; n < epoll_ret; n++) {
             if (events[n].data.fd == server_fd) {
                 while (1) {
                     long req_fd = syscall3(43, server_fd, (long) &addr, (long) &size); // accept request
@@ -486,7 +599,7 @@ void _start(void) {
                     }
                 }
             } else {
-                handle_request(epfd, events[n].events, events[n].data.fd, &config);
+                handle_request(events[n].events, events[n].data.fd, &config);
             }
         }
     }

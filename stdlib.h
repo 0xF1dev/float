@@ -15,11 +15,18 @@
 #define NULL ((void *)0)
 
 #define O_CLOEXEC  02000000
+#define O_RDONLY 00
+
+#define PROT_READ 1
+
+#define MAP_SHARED 0x01
+#define MAP_FAILED (void *) (-1)
 
 #define EPOLL_CTL_ADD 1
 #define EPOLL_CTL_DEL 2
 
 #define EPOLLIN 0x001
+#define EPOLLOUT 0x004
 #define EPOLLERR 0x008
 #define EPOLLHUP 0x010
 #define EPOLLRDHUP 0x2000
@@ -28,6 +35,11 @@
 
 #define S_IFDIR 0040000
 #define S_IFMT 0170000
+
+#define SIGTERM 15
+#define PR_SET_PDEATHSIG 1
+
+#define SO_REUSEPORT 15
 
 struct sockaddr_in {
     unsigned short sin_family;
@@ -63,6 +75,12 @@ struct epoll_event {
     epoll_data_t data;
 } __attribute__((__packed__));
 
+// https://man.archlinux.org/man/core/man-pages/iovec.3type.en
+struct iovec {
+    void *iov_base;
+    unsigned long iov_len;
+};
+
 unsigned long strlen(const char *str);
 
 int itoa(long num, char *buf, long buf_size);
@@ -94,5 +112,7 @@ long syscall3(long num, long arg1, long arg2, long arg3);
 long syscall5(long num, long arg1, long arg2, long arg3, long arg4, long arg5);
 
 long syscall6(long num, long arg1, long arg2, long arg3, long arg4, long arg5, long arg6);
+
+long syscall0(long num);
 
 #endif //FLOAT_STDLIB_H

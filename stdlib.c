@@ -196,7 +196,7 @@ int endswith(const char *str, const char *suffix) {
     return 1;
 }
 
-long print(const char *msg) {
+inline long print(const char *msg) {
     long ret;
 
     __asm__ volatile (
@@ -221,7 +221,7 @@ void print_number(const long num, const int newline) {
     }
 }
 
-long syscall3(long num, long arg1, long arg2, long arg3) {
+inline long syscall3(long num, long arg1, long arg2, long arg3) {
     long ret;
 
     __asm__ volatile (
@@ -234,7 +234,7 @@ long syscall3(long num, long arg1, long arg2, long arg3) {
     return ret;
 }
 
-long syscall5(long num, long arg1, long arg2, long arg3, long arg4, long arg5) {
+inline long syscall5(long num, long arg1, long arg2, long arg3, long arg4, long arg5) {
     long ret;
     register long r10 asm("r10") = arg4;
     register long r8 asm("r8") = arg5;
@@ -249,7 +249,7 @@ long syscall5(long num, long arg1, long arg2, long arg3, long arg4, long arg5) {
     return ret;
 }
 
-long syscall6(long num, long arg1, long arg2, long arg3, long arg4, long arg5, long arg6) {
+inline long syscall6(long num, long arg1, long arg2, long arg3, long arg4, long arg5, long arg6) {
     long ret;
     register long r10 asm("r10") = arg4;
     register long r8 asm("r8") = arg5;
@@ -259,6 +259,19 @@ long syscall6(long num, long arg1, long arg2, long arg3, long arg4, long arg5, l
         "syscall"
         : "=a" (ret)
         : "a" (num), "D" (arg1), "S" (arg2), "d" (arg3), "r" (r10), "r" (r8), "r" (r9)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
+inline long syscall0(long num) {
+    long ret;
+
+    __asm__ volatile (
+        "syscall"
+        : "=a" (ret)
+        : "a" (num)
         : "rcx", "r11", "memory"
     );
 
