@@ -18,6 +18,7 @@ struct route {
 struct error {
     int code;
     char *path;
+    struct file file;
 };
 
 struct dir {
@@ -171,13 +172,13 @@ static long long parse_config(char *config_file, struct config *config) {
     return 0;
 }
 
-static void cache_routes(struct route *routes, long routes_len) {
-    for (long i = 0; i < routes_len; i++) {
-        long fd = syscall3(2, (long) routes[i].path, O_RDONLY, 0);
+static void cache_routes(struct config *config) {
+    for (long i = 0; i < config->routes_len; i++) {
+        long fd = syscall3(2, (long) config->routes[i].path, O_RDONLY, 0);
         if (fd < 0) {
-            print("Could not open file defined in route.\n");
-            print(routes[i].path);
-            print_number(fd, 1);
+            print("Could not open file defined in route: ");
+            print(config->routes[i].path);
+            print("\n");
             continue;
         }
         long statbuf[18]; // statbuf[6] is file size
@@ -192,8 +193,33 @@ static void cache_routes(struct route *routes, long routes_len) {
             syscall3(1, fd, 0, 0);
             continue;
         }
-        routes[i].file.ptr = mmap_ret;
-        routes[i].file.size = statbuf[6];
+        config->routes[i].file.ptr = mmap_ret;
+        config->routes[i].file.size = statbuf[6];
+        syscall3(3, fd, 0, 0);
+    }
+
+    for (long i = 0; i < config->errors_len; i++) {
+        long fd = syscall3(2, (long) config->errors[i].path, O_RDONLY, 0);
+        if (fd < 0) {
+            print("Could not open file defined in route: ");
+            print(config->errors[i].path);
+            print("\n");
+            continue;
+        }
+        long statbuf[18]; // statbuf[6] is file size
+        long stat_ret = syscall3(5, fd, (long) &statbuf, 0);
+        if (stat_ret < 0) {
+            print("Could not get file info.\n");
+            continue;
+        }
+        char *mmap_ret = (char *) syscall6(9, 0, statbuf[6], PROT_READ, MAP_SHARED, fd, 0);
+        if (mmap_ret == MAP_FAILED || mmap_ret == NULL) {
+            print("Could not allocate file.\n");
+            syscall3(1, fd, 0, 0);
+            continue;
+        }
+        config->errors[i].file.ptr = mmap_ret;
+        config->errors[i].file.size = statbuf[6];
         syscall3(3, fd, 0, 0);
     }
 }
@@ -329,11 +355,11 @@ static long generate_headers(char *buf, const int status, const char *filename, 
     return written;
 }
 
-static char *find_error_page(const struct error *errors, const long errors_count, const int error) {
+static int find_error(const struct error *errors, const long errors_count, const int error) {
     for (long i = 0; i < errors_count; i++) {
-        if (errors[i].code == error) return errors[i].path;
+        if (errors[i].code == error) return i;
     }
-    return NULL;
+    return -1;
 }
 
 static char *find_header(char **lines, int lines_size, char *header) {
@@ -402,7 +428,9 @@ static void handle_request(long ev, int fd, struct config *config) {
         if (route == -1) {
             response_status = 404;
             if (contains(accepts, "text/html")) {
-                strcpy(find_error_page(config->errors, config->errors_len, response_status), file_path, 2048);
+                int error_i = find_error(config->errors, config->errors_len, response_status);
+                if (error_i < 0) goto response;
+                strcpy(config->errors[error_i].path, file_path, 2048);
                 struct statx data;
                 const long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
                 if (statx_ret < 0) {
@@ -419,7 +447,9 @@ static void handle_request(long ev, int fd, struct config *config) {
             }
         } else if (route == -2) {
             response_status = 405;
-            strcpy(find_error_page(config->errors, config->errors_len, response_status), file_path, 2048);
+            int error_i = find_error(config->errors, config->errors_len, response_status);
+            if (error_i < 0) goto response;
+            strcpy(config->errors[error_i].path, file_path, 2048);
         } else {
             if (route >= 1073741824) {
                 // to differentiate normal routes with directory routes
@@ -438,7 +468,9 @@ static void handle_request(long ev, int fd, struct config *config) {
                             print_number(statx_ret, 1);
                         }
                         response_status = 404;
-                        strcpy(find_error_page(config->errors, config->errors_len, 404), file_path, 2048);
+                        int error_i = find_error(config->errors, config->errors_len, response_status);
+                        if (error_i < 0) goto response;
+                        strcpy(config->errors[error_i].path, file_path, 2048);
                         if (strcmp(file_path, "\0") == 0) {
                             goto file_info;
                         }
@@ -488,15 +520,21 @@ static void handle_request(long ev, int fd, struct config *config) {
                     goto close;
                 }
             }
-        } else if (route >= 0) {
+        } else if (strlen(file_path) != 0) {
             char res[2048] = {0};
             const long len = generate_headers(res, response_status, file_path, file_size, should_close);
 
             struct iovec iov[2];
             iov[0].iov_base = res;
             iov[0].iov_len = len;
-            iov[1].iov_base = config->routes[route].file.ptr;
-            iov[1].iov_len = config->routes[route].file.size;
+            if (response_status == 200) {
+                iov[1].iov_base = config->routes[route].file.ptr;
+                iov[1].iov_len = config->routes[route].file.size;
+            } else {
+                int error_i = find_error(config->errors, config->errors_len, response_status);
+                iov[1].iov_base = config->errors[error_i].file.ptr;
+                iov[1].iov_len = config->errors[error_i].file.size;
+            }
 
             const long writev_ret = syscall3(20, fd, (long) iov, 2);
             if (writev_ret < 0) {
@@ -514,15 +552,6 @@ static void handle_request(long ev, int fd, struct config *config) {
             if (sent < 0) {
                 print("Could not send headers.\n");
                 goto close;
-            }
-
-            if (strcmp(file_path, "\0") != 0 && size != 0) {
-                long offset = 0;
-                long send_ret = syscall5(40, fd, file_fd, (long) &offset, (long) size, 0);
-                if (send_ret < 0) {
-                    print("Could not send file.\n");
-                    goto close;
-                }
             }
         }
 
@@ -570,7 +599,7 @@ void _start(void) {
         goto exit;
     }
 
-    cache_routes(config.routes, config.routes_len);
+    cache_routes(&config);
 
     unsigned int workers = get_workers();
     print("Workers: ");
