@@ -103,6 +103,8 @@ int startswith(const char *str, const char *prefix);
 
 int endswith(const char *str, const char *suffix);
 
+char *strip_prefix(char *str, const char *prefix);
+
 long print(const char *msg);
 
 void print_number(const long num, const int newline);

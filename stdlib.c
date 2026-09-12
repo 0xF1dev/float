@@ -196,6 +196,14 @@ int endswith(const char *str, const char *suffix) {
     return 1;
 }
 
+inline char *strip_prefix(char *str, const char *prefix) {
+    if (startswith(str, prefix)) {
+        str += strlen(prefix);
+        return str;
+    }
+    return NULL;
+}
+
 inline long print(const char *msg) {
     long ret;
 

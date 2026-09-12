@@ -280,16 +280,16 @@ static long generate_headers(char *buf, char *route, const int status, const cha
     } else if (status == 400) {
         written += strappend(buf, 2048, "400 Bad Request");
     }
-    if (filename != NULL && (strcmp(infer_mimetype(route), "text/html; charset=utf-8") == 0 || strcmp(infer_mimetype(route), "application/octet-stream") == 0)) {
-        written += strappend(buf, 2048, "\nContent-Type: ");
+    if (strcmp(filename, "\0") != 0) {
+        written += strappend(buf, 2048, "\r\nContent-Type: ");
         written += strappend(buf, 2048, infer_mimetype(filename));
-        written += strappend(buf, 2048, "\nContent-Length: ");
+        written += strappend(buf, 2048, "\r\nContent-Length: ");
         written += strappend(buf, 2048, file_size);
     }
     if (status != 200) should_close = 1;
 
     if (should_close) {
-        written += strappend(buf, 2048, "\nConnection: close");
+        written += strappend(buf, 2048, "\r\nConnection: close");
     }
 
     written += strappend(buf, 2048, "\r\n\r\n");
@@ -300,6 +300,18 @@ static long generate_headers(char *buf, char *route, const int status, const cha
 static char *find_error_page(const struct error *errors, const long errors_count, const int error) {
     for (long i = 0; i < errors_count; i++) {
         if (errors[i].code == error) return errors[i].path;
+    }
+    return NULL;
+}
+
+static char *find_header(char **lines, int lines_size, char *header) {
+    for (int i = 0; i < lines_size; i++) {
+        if (startswith(lines[i], header)) {
+            char *buf[2];
+            split(lines[i], ':', buf, 2);
+            buf[1] = strip_prefix(buf[1], " ");
+            return buf[1];
+        }
     }
     return NULL;
 }
@@ -337,8 +349,10 @@ static void handle_request(long ev, int fd, struct config *config) {
         char *params[3];
         split(lines[0], ' ', params, 3);
 
+        char *accepts = find_header(lines, 64, "Accept");
+
         int response_status = 200;
-        char *file_path = NULL;
+        char file_path[2048] = "\0";
 
         if (contains(params[1], "../")) {
             response_status = 400;
@@ -355,30 +369,49 @@ static void handle_request(long ev, int fd, struct config *config) {
         long file_fd = 0;
         if (route == -1) {
             response_status = 404;
-            if (strcmp(infer_mimetype(params[1]), "text/html; charset=utf-8") == 0 || strcmp(infer_mimetype(params[1]), "application/octet-stream") == 0) {
-                file_path = find_error_page(config->errors, config->errors_len, response_status);
+            if (contains(accepts, "text/html")) {
+                strcpy(find_error_page(config->errors, config->errors_len, response_status), file_path, 2048);
+                struct statx data;
+                const long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
+                if (statx_ret < 0) {
+                    print("Could not stat file.\n");
+                    goto response;
+                }
+                file_fd = syscall3(2, (long) file_path, O_RDONLY, 0);
+                if (file_fd < 0) {
+                    print("Could not open file: ");
+                    print_number(file_fd, 1);
+                    goto close;
+                }
+                size = data.stx_size;
             }
         } else if (route == -2) {
             response_status = 405;
-            file_path = find_error_page(config->errors, config->errors_len, response_status);
+            strcpy(find_error_page(config->errors, config->errors_len, response_status), file_path, 2048);
         } else {
             if (route >= 1073741824) {
                 // to differentiate normal routes with directory routes
-                file_path = config->directories[route - 1073741824].path;
-                strappend(file_path, 256, params[1] + strlen(config->directories[route - 1073741824].prefix));
+                strcpy(config->directories[route - 1073741824].path, file_path, 1024);
+                strappend(file_path, 256, strip_prefix(params[1], config->directories[route - 1073741824].prefix));
 
                 struct statx data;
                 data.stx_size = 0;
 
-                if (file_path != NULL) {
+                if (strcmp(file_path, "\0") != 0) {
                 file_info:
                     const long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
                     if (statx_ret < 0) {
-                        print("Could not stat file: ");
+                        print("Could not stat file.\n");
                         print_number(statx_ret, 1);
+                        print("File: ");
+                        print(file_path);
+                        print("\n\n");
                         response_status = 404;
-                        file_path = find_error_page(config->errors, config->errors_len, 404);
-                        goto file_info;
+                        strcpy(find_error_page(config->errors, config->errors_len, 404), file_path, 2048);
+                        if (strcmp(file_path, "\0") == 0) {
+                            goto file_info;
+                        }
+                        goto response;
                     }
                     file_fd = syscall3(2, (long) file_path, O_RDONLY, 0);
                     if (file_fd < 0) {
@@ -389,7 +422,7 @@ static void handle_request(long ev, int fd, struct config *config) {
                 }
                 size = data.stx_size;
             } else {
-                file_path = config->routes[route].path;
+                strcpy(config->routes[route].path, file_path, 2048);
                 size = config->routes[route].file.size;
             }
         }
@@ -444,10 +477,19 @@ static void handle_request(long ev, int fd, struct config *config) {
             char res[2048] = {0};
             const long len = generate_headers(res, params[1], response_status, file_path, file_size, should_close);
 
-            const long write_ret = syscall3(1, fd, (long) res, len);
-            if (write_ret < 0) {
-                print("Could not send response.\n");
+            long sent = syscall6(44, fd, (long) &res, len, MSG_MORE | MSG_NOSIGNAL, 0, 0);
+            if (sent < 0) {
+                print("Could not send headers.\n");
                 goto close;
+            }
+
+            if (strcmp(file_path, "\0") != 0) {
+                long offset = 0;
+                long send_ret = syscall5(40, fd, file_fd, (long) &offset, (long) size, 0);
+                if (send_ret < 0) {
+                    print("Could not send file.\n");
+                    goto close;
+                }
             }
         }
 
