@@ -1,6 +1,7 @@
 #include "stdlib.h"
 
 #define DEFAULT_PORT 8080
+#define DEFAULT_CONFIG "routes.conf"
 
 struct file {
     char *ptr;
@@ -61,6 +62,36 @@ static unsigned short get_port() {
     }
 
     return DEFAULT_PORT;
+}
+
+static char *get_config_path() {
+    const long fd = syscall3(2, (long) "/proc/self/environ", O_RDONLY, 0);
+    if (fd < 0) {
+        print("Could not get environment variables, using config \"routes.conf\".\n");
+        return DEFAULT_CONFIG;
+    }
+
+    char buf[8192];
+    const long read_ret = syscall3(0, fd, (long) buf, 8192);
+    if (read_ret < 0) {
+        print("Could not read environment variables, using config \"routes.conf\".\n");
+        return DEFAULT_CONFIG;
+    }
+
+    syscall3(3, fd, 0, 0); // close
+
+    char *vars[128];
+    const long count = split_null(buf, read_ret, vars, 128);
+
+    for (int i = 0; i < count; i++) {
+        if (startswith(vars[i], "CONFIG=")) {
+            char *val[2];
+            if (split(vars[i], '=', val, 2) < 2) return DEFAULT_CONFIG;
+            return val[1];
+        }
+    }
+
+    return DEFAULT_CONFIG;
 }
 
 static int headers_done(const char *buf) {
@@ -435,10 +466,12 @@ void _start(void) {
     unsigned short port = get_port();
 
     // read config
-    char *path = "../routes.conf";
+    char *path = get_config_path();
     long conf_fd = syscall3(2, (long) path, O_RDONLY, 0);
     if (conf_fd < 0) {
-        print("Could not open routes file.\n");
+        print("Could not open routes file: ");
+        print(path);
+        print("\n");
         goto exit;
     }
 
