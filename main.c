@@ -403,11 +403,10 @@ static void handle_request(long ev, int fd, struct config *config) {
                 file_info:
                     const long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
                     if (statx_ret < 0) {
-                        print("Could not stat file.\n");
-                        print_number(statx_ret, 1);
-                        print("File: ");
-                        print(file_path);
-                        print("\n\n");
+                        if (statx_ret != -2) {
+                            print("Could not stat file: ");
+                            print_number(statx_ret, 1);
+                        }
                         response_status = 404;
                         strcpy(find_error_page(config->errors, config->errors_len, 404), file_path, 2048);
                         if (strcmp(file_path, "\0") == 0) {
@@ -451,11 +450,13 @@ static void handle_request(long ev, int fd, struct config *config) {
                 goto close;
             }
 
-            long offset = 0;
-            long send_ret = syscall5(40, fd, file_fd, (long) &offset, (long) size, 0);
-            if (send_ret < 0) {
-                print("Could not send file.\n");
-                goto close;
+            if (size != 0) {
+                long offset = 0;
+                long send_ret = syscall5(40, fd, file_fd, (long) &offset, (long) size, 0);
+                if (send_ret < 0) {
+                    print("Could not send file.\n");
+                    goto close;
+                }
             }
         } else if (route >= 0) {
             char res[2048] = {0};
@@ -485,7 +486,7 @@ static void handle_request(long ev, int fd, struct config *config) {
                 goto close;
             }
 
-            if (strcmp(file_path, "\0") != 0) {
+            if (strcmp(file_path, "\0") != 0 && size != 0) {
                 long offset = 0;
                 long send_ret = syscall5(40, fd, file_fd, (long) &offset, (long) size, 0);
                 if (send_ret < 0) {
@@ -495,7 +496,7 @@ static void handle_request(long ev, int fd, struct config *config) {
             }
         }
 
-        if (!should_close) return;
+        if (should_close == 0) return;
     }
 
 close:
@@ -578,9 +579,11 @@ void _start(void) {
             goto open_server;
         };
     }
-    print("Server started on port ");
+    print("Server started on \x1b]8;;http://127.0.0.1:");
     print_number(port, 0);
-    print("!\n");
+    print("\x1b\\127.0.0.1:");
+    print_number(port, 0);
+    print("\x1b]8;;\x1b\\!\n");
 monitor:
     syscall5(61, -1, (long) NULL, 0, 0, 0); // wait for a child process to die
     long pid = syscall0(57); // respawn it
