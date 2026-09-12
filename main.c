@@ -431,25 +431,14 @@ static void handle_request(long ev, int fd, struct config *config) {
                 int error_i = find_error(config->errors, config->errors_len, response_status);
                 if (error_i < 0) goto response;
                 strcpy(config->errors[error_i].path, file_path, 2048);
-                struct statx data;
-                const long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
-                if (statx_ret < 0) {
-                    print("Could not stat file.\n");
-                    goto response;
-                }
-                file_fd = syscall3(2, (long) file_path, O_RDONLY, 0);
-                if (file_fd < 0) {
-                    print("Could not open file: ");
-                    print_number(file_fd, 1);
-                    goto close;
-                }
-                size = data.stx_size;
             }
         } else if (route == -2) {
             response_status = 405;
-            int error_i = find_error(config->errors, config->errors_len, response_status);
-            if (error_i < 0) goto response;
-            strcpy(config->errors[error_i].path, file_path, 2048);
+            if (contains(accepts, "text/html")) {
+                int error_i = find_error(config->errors, config->errors_len, response_status);
+                if (error_i < 0) goto response;
+                strcpy(config->errors[error_i].path, file_path, 2048);
+            }
         } else {
             if (route >= 1073741824) {
                 // to differentiate normal routes with directory routes
