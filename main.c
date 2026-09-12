@@ -112,7 +112,7 @@ static long long parse_config(char *config_file, struct config *config) {
             config->routes[config->routes_len].route = data[1];
             config->routes[config->routes_len].path = data[2];
             config->routes_len++;
-        } else if (strcmp(data[0], "ERROR") == 0) {
+        } else if (strcmp(data[0], "ERR") == 0) {
             config->errors[config->errors_len].code = atoi(data[1]);
             config->errors[config->errors_len].path = data[2];
             config->errors_len++;
