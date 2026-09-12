@@ -269,7 +269,7 @@ static char *infer_mimetype(const char *filename) {
     return "application/octet-stream";
 }
 
-static long generate_headers(char *buf, char *route, const int status, const char *filename, const char *file_size,
+static long generate_headers(char *buf, const int status, const char *filename, const char *file_size,
                              int should_close) {
     long written = 9;
     strcpy("HTTP/1.1 ", buf, 2048);
@@ -443,7 +443,7 @@ static void handle_request(long ev, int fd, struct config *config) {
 
         if (route >= 1073741824) {
             char res[2048] = {0};
-            const long len = generate_headers(res, params[1], response_status, file_path, file_size, should_close);
+            const long len = generate_headers(res, response_status, file_path, file_size, should_close);
 
             long sent = syscall6(44, fd, (long) &res, len, MSG_MORE | MSG_NOSIGNAL, 0, 0);
             if (sent < 0) {
@@ -459,7 +459,7 @@ static void handle_request(long ev, int fd, struct config *config) {
             }
         } else if (route >= 0) {
             char res[2048] = {0};
-            const long len = generate_headers(res, params[1], response_status, file_path, file_size, should_close);
+            const long len = generate_headers(res, response_status, file_path, file_size, should_close);
 
             struct iovec iov[2];
             iov[0].iov_base = res;
@@ -477,7 +477,7 @@ static void handle_request(long ev, int fd, struct config *config) {
             }
         } else {
             char res[2048] = {0};
-            const long len = generate_headers(res, params[1], response_status, file_path, file_size, should_close);
+            const long len = generate_headers(res, response_status, file_path, file_size, should_close);
 
             long sent = syscall6(44, fd, (long) &res, len, MSG_MORE | MSG_NOSIGNAL, 0, 0);
             if (sent < 0) {
