@@ -431,6 +431,7 @@ static void handle_request(long ev, int fd, struct config *config) {
                 int error_i = find_error(config->errors, config->errors_len, response_status);
                 if (error_i < 0) goto response;
                 strcpy(config->errors[error_i].path, file_path, 2048);
+                size = config->errors[error_i].file.size;
             }
         } else if (route == -2) {
             response_status = 405;
@@ -438,6 +439,7 @@ static void handle_request(long ev, int fd, struct config *config) {
                 int error_i = find_error(config->errors, config->errors_len, response_status);
                 if (error_i < 0) goto response;
                 strcpy(config->errors[error_i].path, file_path, 2048);
+                size = config->errors[error_i].file.size;
             }
         } else {
             if (route >= 1073741824) {
