@@ -106,6 +106,7 @@ Here is a list of all the syscalls Float uses:
 - `open`
 - `read`
 - `close`
+- `rt_sigprocmask`
 - `fstat`
 - `mmap`
 - `fork`
