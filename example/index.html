@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/static/global.css" />
+    <link rel="shortcut icon" href="/static/favicon.ico" type="image/x-icon" />
+    <title>home | float</title>
+  </head>
+  <body>
+    <div id="header">
+      <div id="logo"><a href="/"><img src="/static/float-white.png" alt="float" /></a></div>
+      <div id="links">
+        <a href="/why-float">why use float?</a>
+      </div>
+    </div>
+    <div id="top">
+      <h1>float</h1>
+      <p>a lightweight static http server written in freestanding c</p>
+    </div>
+    <div id="content">
+      <p>
+        this is an example website. currently, you've tried static and dynamic
+        folder routing! go on an
+        <a href="/this-is-gonna-error">unknown page</a> to test errors
+      </p>
+    </div>
+  </body>
+
+  <style>
+    @font-face {
+      font-family: "Montserrat";
+      src: url("/static/Montserrat-VariableFont_wght.ttf");
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #121212;
+    }
+
+    * {
+      color: white;
+    }
+
+    #header {
+      position: sticky;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 24px;
+      background-color: #121212;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+    }
+
+    #logo > a > img {
+      width: 64px;
+    }
+
+    #links {
+      display: flex;
+      gap: 2rem;
+    }
+
+    #top {
+      width: 100%;
+      height: 500px;
+      background-color: #242424;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-family: "Montserrat";
+      font-size: 24px;
+    }
+
+    #content {
+      width: 100%;
+      padding: 8rem 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+  </style>
+</html>

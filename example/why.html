@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/static/global.css" />
+    <link rel="shortcut icon" href="/static/favicon.ico" type="image/x-icon" />
+    <title>why use it? | float</title>
+  </head>
+  <body>
+    <div id="header">
+      <div id="logo"><a href="/"><img src="/static/float-white.png" alt="float" /></a></div>
+      <div id="links">
+        <a href="/why-float">why use float?</a>
+      </div>
+    </div>
+    <div id="content">
+      <p>
+        theres no way im writing all that, go check out the
+        <a href="https://github.com/0xF1dev/float">readme</a>
+      </p>
+      <i>psst... ill just say one thing... run <code>pmap -x $(pgrep float)</code> :)</i>
+    </div>
+  </body>
+
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #121212;
+    }
+
+    * {
+      color: white;
+    }
+
+    #header {
+      position: sticky;
+      top: 0;
+      left: 0;
+      right: 0;
+      padding: 24px;
+      background-color: #121212;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+    }
+
+    #logo > a > img {
+      width: 64px;
+    }
+
+    #links {
+      display: flex;
+      gap: 2rem;
+    }
+
+    #content {
+      width: 100%;
+      padding: 8rem 0;
+      background-color: #242424;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    code {
+        background-color: #363636;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-style: normal;
+    }
+  </style>
+</html>

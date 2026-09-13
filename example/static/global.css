@@ -1,0 +1,8 @@
+@font-face {
+    font-family: 'Satoshi';
+    src: url("/static/Satoshi-Variable.woff2");
+}
+
+* {
+    font-family: 'Satoshi';
+}
