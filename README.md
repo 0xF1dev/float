@@ -6,6 +6,13 @@ It supports standard routes, custom error pages and dynamic folder-based routes,
 
 Since it relies on Linux syscalls, other OSes aren't supported.
 
+## Building
+
+After cloning the repository, simply build with CMake:
+```shell
+cmake -B build && cmake --build build
+```
+
 ## Usage
 
 ### Quick start

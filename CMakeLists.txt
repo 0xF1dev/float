@@ -51,4 +51,8 @@ add_executable(float main.c
 
 target_link_options(float PRIVATE -T${CMAKE_CURRENT_SOURCE_DIR}/linker.ld)
 
-add_custom_command(TARGET float POST_BUILD COMMAND sstrip "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}" COMMENT "Stripping executable")
+if(COMMAND sstrip)
+    add_custom_command(TARGET float POST_BUILD COMMAND sstrip "${CMAKE_BINARY_DIR}/${CMAKE_PROJECT_NAME}" COMMENT "Stripping executable with sstrip")
+else()
+    message(WARNING "Could not strip executable (sstrip not found), executable may be larger.")
+endif()
