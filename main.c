@@ -36,20 +36,20 @@ struct config {
 };
 
 static unsigned short get_port() {
-    const long fd = syscall3(2, (long) "/proc/self/environ", O_RDONLY, 0);
+    const int fd = open("/proc/self/environ", O_RDONLY);
     if (fd < 0) {
         print("Could not get environment variables, using port 8080.\n");
         return DEFAULT_PORT;
     }
 
     char buf[8192];
-    const long read_ret = syscall3(0, fd, (long) buf, 8192);
+    const long read_ret = read((int) fd, buf, 8192);
     if (read_ret < 0) {
         print("Could not read environment variables, using port 8080.\n");
         return DEFAULT_PORT;
     }
 
-    syscall3(3, fd, 0, 0); // close
+    close(fd); // close
 
     char *vars[128];
     const long count = split_null(buf, read_ret, vars, 128);
@@ -66,20 +66,20 @@ static unsigned short get_port() {
 }
 
 static char *get_config_path() {
-    const long fd = syscall3(2, (long) "/proc/self/environ", O_RDONLY, 0);
+    const int fd = open("/proc/self/environ", O_RDONLY);
     if (fd < 0) {
         print("Could not get environment variables, using config \"routes.conf\".\n");
         return DEFAULT_CONFIG;
     }
 
     char buf[8192];
-    const long read_ret = syscall3(0, fd, (long) buf, 8192);
+    const long read_ret = read(fd, buf, 8192);
     if (read_ret < 0) {
         print("Could not read environment variables, using config \"routes.conf\".\n");
         return DEFAULT_CONFIG;
     }
 
-    syscall3(3, fd, 0, 0); // close
+    close(fd); // close
 
     char *vars[128];
     const long count = split_null(buf, read_ret, vars, 128);
@@ -96,20 +96,20 @@ static char *get_config_path() {
 }
 
 static unsigned int get_workers() {
-    const long fd = syscall3(2, (long) "/proc/self/environ", O_RDONLY, 0);
+    const int fd = open("/proc/self/environ", O_RDONLY);
     if (fd < 0) {
         print("Could not get environment variables, using config \"routes.conf\".\n");
         return DEFAULT_WORKERS;
     }
 
     char buf[8192];
-    const long read_ret = syscall3(0, fd, (long) buf, 8192);
+    const long read_ret = read(fd, buf, 8192);
     if (read_ret < 0) {
         print("Could not read environment variables, using config \"routes.conf\".\n");
         return DEFAULT_WORKERS;
     }
 
-    syscall3(3, fd, 0, 0); // close
+    close(fd); // close
 
     char *vars[128];
     const long count = split_null(buf, read_ret, vars, 128);
@@ -149,9 +149,10 @@ static long long parse_config(char *config_file, struct config *config) {
             config->errors_len++;
         } else if (strcmp(data[0], "DIR") == 0) {
             struct statx info = {0};
-            long dir_ret = syscall5(332, AT_FDCWD, (long) data[2], 0, 0x00000002U, (long) &info);
+            long dir_ret = statx(AT_FDCWD, data[2], 0, 0x00000002U, &info);
             if (dir_ret < 0) {
-                print("Could not read static directory defined in config.\n");
+                print("Could not read dynamic directory defined in config.\n");
+                print_number(dir_ret, 1);
                 return -1;
             }
             if ((info.stx_mode & S_IFMT) == S_IFDIR) {
@@ -174,7 +175,7 @@ static long long parse_config(char *config_file, struct config *config) {
 
 static void cache_routes(struct config *config) {
     for (long i = 0; i < config->routes_len; i++) {
-        long fd = syscall3(2, (long) config->routes[i].path, O_RDONLY, 0);
+        const int fd = open(config->routes[i].path, O_RDONLY);
         if (fd < 0) {
             print("Could not open file defined in route: ");
             print(config->routes[i].path);
@@ -182,24 +183,24 @@ static void cache_routes(struct config *config) {
             continue;
         }
         long statbuf[18]; // statbuf[6] is file size
-        long stat_ret = syscall3(5, fd, (long) &statbuf, 0);
+        long stat_ret = fstat(fd, statbuf);
         if (stat_ret < 0) {
             print("Could not get file info.\n");
             continue;
         }
-        char *mmap_ret = (char *) syscall6(9, 0, statbuf[6], PROT_READ, MAP_SHARED, fd, 0);
+        char *mmap_ret = mmap(0, statbuf[6], PROT_READ, MAP_SHARED, fd, 0);
         if (mmap_ret == MAP_FAILED || mmap_ret == NULL) {
             print("Could not allocate file.\n");
-            syscall3(1, fd, 0, 0);
+            close(fd);
             continue;
         }
         config->routes[i].file.ptr = mmap_ret;
         config->routes[i].file.size = statbuf[6];
-        syscall3(3, fd, 0, 0);
+        close(fd);
     }
 
     for (long i = 0; i < config->errors_len; i++) {
-        long fd = syscall3(2, (long) config->errors[i].path, O_RDONLY, 0);
+        const int fd = open(config->errors[i].path, O_RDONLY);
         if (fd < 0) {
             print("Could not open file defined in route: ");
             print(config->errors[i].path);
@@ -207,20 +208,20 @@ static void cache_routes(struct config *config) {
             continue;
         }
         long statbuf[18]; // statbuf[6] is file size
-        long stat_ret = syscall3(5, fd, (long) &statbuf, 0);
+        long stat_ret = fstat(fd, statbuf);
         if (stat_ret < 0) {
             print("Could not get file info.\n");
             continue;
         }
-        char *mmap_ret = (char *) syscall6(9, 0, statbuf[6], PROT_READ, MAP_SHARED, fd, 0);
+        char *mmap_ret = mmap(0, statbuf[6], PROT_READ, MAP_SHARED, fd, 0);
         if (mmap_ret == MAP_FAILED || mmap_ret == NULL) {
             print("Could not allocate file.\n");
-            syscall3(1, fd, 0, 0);
+            close(fd);
             continue;
         }
         config->errors[i].file.ptr = mmap_ret;
         config->errors[i].file.size = statbuf[6];
-        syscall3(3, fd, 0, 0);
+        close(fd);
     }
 }
 
@@ -356,7 +357,7 @@ static long generate_headers(char *buf, const int status, const char *filename, 
 }
 
 static int find_error(const struct error *errors, const long errors_count, const int error) {
-    for (long i = 0; i < errors_count; i++) {
+    for (int i = 0; i < errors_count; i++) {
         if (errors[i].code == error) return i;
     }
     return -1;
@@ -380,17 +381,17 @@ static void handle_request(long ev, int fd, struct config *config) {
     if (ev & (EPOLLIN | EPOLLOUT)) {
         char req_buf[4096];
 
-        long read = syscall3(0, fd, (long) req_buf, 4096);
-        if (read < 0 && read != -11) {
+        long read_ret = read(fd, req_buf, 4096);
+        if (read_ret < 0 && read_ret != -11) {
             print("Could not read request.\n");
             goto close;
         }
-        if (read == 0) {
+        if (read_ret == 0) {
             print("Request done.\n");
             goto close;
         }
 
-        req_buf[read] = '\0';
+        req_buf[read_ret] = '\0';
 
         if (!headers_done(req_buf)) return;
 
@@ -424,7 +425,7 @@ static void handle_request(long ev, int fd, struct config *config) {
 
         unsigned long long size = 0;
         long route = match_route(config, params[1]);
-        long file_fd = 0;
+        int file_fd = 0;
         if (route == -1) {
             response_status = 404;
             if (contains(accepts, "text/html")) {
@@ -452,7 +453,7 @@ static void handle_request(long ev, int fd, struct config *config) {
 
                 if (strcmp(file_path, "\0") != 0) {
                 file_info:
-                    const long statx_ret = syscall5(332, AT_FDCWD, (long) file_path, 0, 0x000007ffU, (long) &data);
+                    const long statx_ret = statx(AT_FDCWD, file_path, 0, 0x000007ffU, &data);
                     if (statx_ret < 0) {
                         if (statx_ret != -2) {
                             print("Could not stat file: ");
@@ -467,7 +468,7 @@ static void handle_request(long ev, int fd, struct config *config) {
                         }
                         goto response;
                     }
-                    file_fd = syscall3(2, (long) file_path, O_RDONLY, 0);
+                    file_fd = open(file_path, O_RDONLY);
                     if (file_fd < 0) {
                         print("Could not open file: ");
                         print_number(file_fd, 1);
@@ -497,7 +498,7 @@ static void handle_request(long ev, int fd, struct config *config) {
             char res[2048] = {0};
             const long len = generate_headers(res, response_status, file_path, file_size, should_close);
 
-            long sent = syscall6(44, fd, (long) &res, len, MSG_MORE | MSG_NOSIGNAL, 0, 0);
+            long sent = send(fd, res, len, MSG_MORE | MSG_NOSIGNAL);
             if (sent < 0) {
                 print("Could not send headers.\n");
                 goto close;
@@ -505,7 +506,7 @@ static void handle_request(long ev, int fd, struct config *config) {
 
             if (size != 0) {
                 long offset = 0;
-                long send_ret = syscall5(40, fd, file_fd, (long) &offset, (long) size, 0);
+                long send_ret = sendfile(fd, file_fd, &offset, (long) size);
                 if (send_ret < 0) {
                     print("Could not send file.\n");
                     goto close;
@@ -522,12 +523,12 @@ static void handle_request(long ev, int fd, struct config *config) {
                 iov[1].iov_base = config->routes[route].file.ptr;
                 iov[1].iov_len = config->routes[route].file.size;
             } else {
-                int error_i = find_error(config->errors, config->errors_len, response_status);
+                const int error_i = find_error(config->errors, config->errors_len, response_status);
                 iov[1].iov_base = config->errors[error_i].file.ptr;
                 iov[1].iov_len = config->errors[error_i].file.size;
             }
 
-            const long writev_ret = syscall3(20, fd, (long) iov, 2);
+            const long writev_ret = writev(fd, iov, 2);
             if (writev_ret < 0) {
                 print("Could not send response.\n");
                 goto close;
@@ -539,7 +540,7 @@ static void handle_request(long ev, int fd, struct config *config) {
             char res[2048] = {0};
             const long len = generate_headers(res, response_status, file_path, file_size, should_close);
 
-            long sent = syscall6(44, fd, (long) &res, len, MSG_MORE | MSG_NOSIGNAL, 0, 0);
+            long sent = send(fd, res, len, MSG_MORE | MSG_NOSIGNAL);
             if (sent < 0) {
                 print("Could not send headers.\n");
                 goto close;
@@ -550,7 +551,7 @@ static void handle_request(long ev, int fd, struct config *config) {
     }
 
 close:
-    const long close_ret = syscall3(3, fd, 0, 0);
+    const long close_ret = close(fd);
     if (close_ret < 0) {
         print("Could not close connection: ");
         print_number(close_ret, 1);
@@ -562,13 +563,13 @@ void _start(void) {
 
     // block SIGPIPE
     unsigned long mask = (1ULL << (13 - 1));
-    syscall5(14, 0, (long) &mask, 0, 8, 0);
+    sigprocmask(0, mask, 0, 8);
 
     unsigned short port = get_port();
 
     // read config
     char *path = get_config_path();
-    long conf_fd = syscall3(2, (long) path, O_RDONLY, 0);
+    int conf_fd = open(path, O_RDONLY);
     if (conf_fd < 0) {
         print("Could not open routes file: ");
         print(path);
@@ -577,7 +578,7 @@ void _start(void) {
     }
 
     char config_buf[4096];
-    long config_read = syscall3(0, conf_fd, (long) config_buf, 4096);
+    long config_read = read(conf_fd, config_buf, 4096);
     if (config_read < 0) {
         print("Could not read config.");
         goto exit;
@@ -627,9 +628,9 @@ void _start(void) {
     }
 
     for (unsigned int i = 0; i < workers; i++) {
-        long pid = syscall0(57);
+        long pid = fork();
         if (pid == 0) {
-            syscall3(157, PR_SET_PDEATHSIG, SIGTERM, 0); // monitor parent process
+            prctl(PR_SET_PDEATHSIG, SIGTERM); // monitor parent process
             goto open_server;
         };
     }
@@ -639,8 +640,8 @@ void _start(void) {
     print_number(port, 0);
     print("\x1b]8;;\x1b\\!\n");
 monitor:
-    syscall5(61, -1, (long) NULL, 0, 0, 0); // wait for a child process to die
-    long pid = syscall0(57); // respawn it
+    wait4(-1, NULL, 0, 0); // wait for a child process to die
+    long pid = fork(); // respawn it
     if (pid != 0) {
         print("Detected terminated child, respawned.\n");
         goto monitor;
@@ -648,35 +649,35 @@ monitor:
 
 open_server:
     // open socket
-    long server_fd = syscall3(41, AF_INET, SOCK_STREAM, 0);
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
         print("Could not open socket.");
         goto exit;
     }
 
     int reuse = 1;
-    long reuse_ret = syscall5(54, server_fd, SOL_SOCKET, SO_REUSEPORT, (long) &reuse, sizeof(reuse));
+    long reuse_ret = setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse));
     if (reuse_ret < 0) {
         print("Could not reuse port.\n");
         goto exit;
     }
 
     // make non blocking
-    long nb_ret = syscall3(72, server_fd, 4, O_NONBLOCK);
+    long nb_ret = fcntl(server_fd, 4, O_NONBLOCK);
     if (nb_ret < 0) {
         print("Could not make socket non-blocking.\n");
         goto exit;
     }
 
     // bind to port (needs the port to be little-endian)
-    struct sockaddr_in addr = {0};
+    struct sockaddr addr = {0};
     addr.sin_family = AF_INET;
     // sizeof returns size in bits, so *4 is equivalent to * 8 / 2 (it has to shift the bits by half of the num's size)
     addr.sin_port = (port << sizeof(port) * 4) | (port >> sizeof(port) * 4);
     addr.sin_addr = 0;
 
     int optval = 1;
-    long sockopt_ret = syscall5(54, server_fd, SOL_SOCKET, 2, (long) &optval, sizeof(optval));
+    long sockopt_ret = setsockopt(server_fd, SOL_SOCKET, 2, &optval, sizeof(optval));
     // avoids EADDRINUSE error
     if (sockopt_ret < 0) {
         print("Could not set option.\n");
@@ -685,33 +686,34 @@ open_server:
 
     long size = sizeof(addr);
 
-    long bind_ret = syscall3(49, server_fd, (long) &addr, size); // bind to port 8080
+    long bind_ret = bind(server_fd, &addr, size); // bind to port 8080
     if (bind_ret < 0) {
         print("Could not bind");
         if (bind_ret == -98) {
             print(", port in use.\n");
         } else {
             print(".\n");
+            print_number(bind_ret, 1);
         }
         goto exit;
     }
 
-    long epfd = syscall3(291, O_CLOEXEC, 0, 0); // EPOLL_CLOEXEC
+    int epfd = epoll_create1(O_CLOEXEC); // EPOLL_CLOEXEC
 
     struct epoll_event ev, events[128];
     ev.events = EPOLLIN;
-    ev.data.fd = (int) server_fd;
+    ev.data.fd = server_fd;
 
-    syscall5(233, epfd, EPOLL_CTL_ADD, server_fd, (long) &ev, 0); // 1 = EPOLL_CTL_ADD
+    epoll_ctl(epfd, EPOLL_CTL_ADD, server_fd, &ev); // 1 = EPOLL_CTL_ADD
 
-    long listen_ret = syscall3(50, server_fd, 8192, 0); // listen (backlog of len 8192)
+    long listen_ret = listen(server_fd, 8192); // listen (backlog of len 8192)
     if (listen_ret < 0) {
         print("Could not start listening.\n");
         goto exit;
     }
 
     while (1) {
-        long epoll_ret = syscall5(232, epfd, (long) &events, 128, 10000, 0);
+        long epoll_ret = epoll_wait(epfd, events, 128, 10000);
         if (epoll_ret < 0) {
             print("Could not get epoll events.\n");
             continue;
@@ -720,19 +722,19 @@ open_server:
         for (long n = 0; n < epoll_ret; n++) {
             if (events[n].data.fd == server_fd) {
                 while (1) {
-                    long req_fd = syscall3(43, server_fd, (long) &addr, (long) &size); // accept request
+                    int req_fd = accept(server_fd, &addr, &size); // accept request
                     if (req_fd < 0) {
                         // all requests have been accepted
                         break;
                     }
-                    syscall3(72, req_fd, 4, O_NONBLOCK); // make non blocking
+                    fcntl(req_fd, 4, O_NONBLOCK); // make non blocking
 
                     int flag = 1;
-                    syscall5(54, req_fd, IPPROTO_TCP, TCP_NODELAY, (long) &flag, sizeof(flag));
+                    setsockopt(req_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
                     ev.events = EPOLLIN | EPOLLRDHUP;
-                    ev.data.fd = (int) req_fd;
-                    long ctl_ret = syscall5(233, epfd, EPOLL_CTL_ADD, req_fd, (long) &ev, 0);
+                    ev.data.fd = req_fd;
+                    long ctl_ret = epoll_ctl(epfd, EPOLL_CTL_ADD, req_fd, &ev);
                     if (ctl_ret < 0) {
                         print("Could not add epoll.\n");
                         continue;

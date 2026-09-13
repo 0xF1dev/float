@@ -229,6 +229,32 @@ void print_number(const long num, const int newline) {
     }
 }
 
+inline long syscall1(long num, long arg1) {
+    long ret;
+
+    __asm__ volatile (
+        "syscall"
+        : "=a" (ret)
+        : "a" (num), "D" (arg1)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
+inline long syscall2(long num, long arg1, long arg2) {
+    long ret;
+
+    __asm__ volatile (
+        "syscall"
+        : "=a" (ret)
+        : "a" (num), "D" (arg1), "S" (arg2)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
 inline long syscall3(long num, long arg1, long arg2, long arg3) {
     long ret;
 
@@ -236,6 +262,20 @@ inline long syscall3(long num, long arg1, long arg2, long arg3) {
         "syscall"
         : "=a" (ret)
         : "a" (num), "D" (arg1), "S" (arg2), "d" (arg3)
+        : "rcx", "r11", "memory"
+    );
+
+    return ret;
+}
+
+inline long syscall4(long num, long arg1, long arg2, long arg3, long arg4) {
+    long ret;
+    register long r10 asm("r10") = arg4;
+
+    __asm__ volatile (
+        "syscall"
+        : "=a" (ret)
+        : "a" (num), "D" (arg1), "S" (arg2), "d" (arg3), "r" (r10)
         : "rcx", "r11", "memory"
     );
 
@@ -284,4 +324,92 @@ inline long syscall0(long num) {
     );
 
     return ret;
+}
+
+inline long read(const int fd, char *buf, const long count) {
+    return syscall3(SYS_READ, fd, (long) buf, count);
+}
+
+inline int open(const char *path, const int flags) {
+    return (int) syscall2(SYS_OPEN, (long) path, flags);
+}
+
+inline int close(const int fd) {
+    return (int) syscall1(SYS_CLOSE, fd);
+}
+
+inline int fstat(const int fd, long *statbuf) {
+    return (int) syscall2(SYS_FSTAT, fd, (long) statbuf);
+}
+
+inline char *mmap(void *addr, const long length, const int prot, const int flags, const int fd, int offset) {
+    return (char *) syscall6(SYS_MMAP, (long) addr, length, prot, flags, fd, offset);
+}
+
+inline int sigprocmask(const int how, unsigned long set, const long oldset, const int size) {
+    return (int) syscall4(SYS_RT_SIGPROCMASK, how, (long) &set, oldset, size);
+}
+
+inline long writev(const int fd, struct iovec *iov, const int iovcnt) {
+    return syscall3(SYS_WRITEV, fd, (long) iov, iovcnt);
+}
+
+inline long sendfile(const int out_fd, const int in_fd, long *offset, const long count) {
+    return syscall4(SYS_SENDFILE, out_fd, in_fd, (long) offset, count);
+}
+
+inline int socket(const int domain, const int type, const int protocol) {
+    return (int) syscall3(SYS_SOCKET, domain, type, protocol);
+}
+
+inline int accept(const int sockfd, struct sockaddr *addr, long *addrlen) {
+    return (int) syscall3(SYS_ACCEPT, sockfd, (long) addr, (long) addrlen);
+}
+
+inline long send(const int sockfd, char *buf, const long size, const int flags) {
+    return syscall6(SYS_SENDTO, sockfd, (long) buf, size, flags, 0, 0);
+}
+
+inline int bind(const int sockfd, struct sockaddr *addr, long addrlen) {
+    return (int) syscall3(SYS_BIND, sockfd, (long) addr, addrlen);
+}
+
+inline int listen(const int sockfd, const int backlog) {
+    return (int) syscall2(SYS_LISTEN, sockfd, backlog);
+}
+
+inline int setsockopt(const int sockfd, const int level, const int optname, int *optval, const long optlen) {
+    return (int) syscall5(SYS_SETSOCKOPT, sockfd, level, optname, (long) optval, optlen);
+}
+
+inline long fork() {
+    return syscall0(SYS_FORK);
+}
+
+inline long wait4(const long pid, int *wstatus, const int options, long *rusage) {
+    return syscall4(SYS_WAIT4, pid, (long) wstatus, options, (long) rusage);
+}
+
+inline int fcntl(const int fd, const int op, const long opname) {
+    return (int) syscall3(SYS_FCNTL, fd, op, opname);
+}
+
+inline int prctl(const int op, const int signal) {
+    return (int) syscall2(SYS_PRCTL, op, signal);
+}
+
+inline int epoll_wait(const int epfd, struct epoll_event *events, const int n, const int timeout) {
+    return (int) syscall4(SYS_EPOLLWAIT, epfd, (long) events, n, timeout);
+}
+
+inline int epoll_ctl(const int epfd, const int op, const int fd, struct epoll_event *event) {
+    return (int) syscall4(SYS_EPOLLCTL, epfd, op, fd, (long) event);
+}
+
+inline int epoll_create1(const int flags) {
+    return (int) syscall1(SYS_EPOLLCREATE1, flags);
+}
+
+inline int statx(const int dirfd, char *path, const int flags, const int mask, struct statx *statxbuf) {
+    return (int) syscall5(SYS_STATX, dirfd, (long) path, flags, mask, (long) statxbuf);
 }

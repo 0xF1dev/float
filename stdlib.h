@@ -41,7 +41,30 @@
 
 #define SO_REUSEPORT 15
 
-struct sockaddr_in {
+#define SYS_READ 0
+#define SYS_OPEN 2
+#define SYS_CLOSE 3
+#define SYS_FSTAT 5
+#define SYS_MMAP 9
+#define SYS_RT_SIGPROCMASK 14
+#define SYS_WRITEV 20
+#define SYS_SENDFILE 40
+#define SYS_SOCKET 41
+#define SYS_ACCEPT 43
+#define SYS_SENDTO 44
+#define SYS_BIND 49
+#define SYS_LISTEN 50
+#define SYS_SETSOCKOPT 54
+#define SYS_FORK 57
+#define SYS_WAIT4 61
+#define SYS_FCNTL 72
+#define SYS_PRCTL 157
+#define SYS_EPOLLWAIT 232
+#define SYS_EPOLLCTL 233
+#define SYS_EPOLLCREATE1 291
+#define SYS_STATX 332
+
+struct sockaddr {
     unsigned short sin_family;
     unsigned short sin_port;
     unsigned int sin_addr;
@@ -107,14 +130,43 @@ char *strip_prefix(char *str, const char *prefix);
 
 long print(const char *msg);
 
-void print_number(const long num, const int newline);
+void print_number(long num, int newline);
+
+long syscall1(long num, long arg1);
+
+long syscall2(long num, long arg1, long arg2);
 
 long syscall3(long num, long arg1, long arg2, long arg3);
+
+long syscall4(long num, long arg1, long arg2, long arg3, long arg4);
 
 long syscall5(long num, long arg1, long arg2, long arg3, long arg4, long arg5);
 
 long syscall6(long num, long arg1, long arg2, long arg3, long arg4, long arg5, long arg6);
 
 long syscall0(long num);
+
+long read(int fd, char *buf, long count);
+int open(const char *path, int flags);
+int close(int fd);
+int fstat(int fd, long *statbuf);
+char *mmap(void *addr, long length, int prot, int flags, int fd, int offset);
+int sigprocmask(int how, unsigned long set, long oldset, int size);
+long writev(int fd, struct iovec *iov, int iovcnt);
+long sendfile(int out_fd, int in_fd, long *offset, long count);
+int socket(int domain, int type, int protocol);
+int accept(int sockfd, struct sockaddr *addr, long *addrlen);
+long send(int sockfd, char *buf, long size, int flags);
+int bind(int sockfd, struct sockaddr *addr, long addrlen);
+int listen(int sockfd, int backlog);
+int setsockopt(int sockfd, int level, int optname, int *optval, long optlen);
+long fork();
+long wait4(long pid, int *wstatus, int options, long *rusage);
+int fcntl(int fd, int op, long opname);
+int prctl(int op, int signal);
+int epoll_wait(int epfd, struct epoll_event *events, int n, int timeout);
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+int epoll_create1(int flags);
+int statx(int dirfd, char *path, int flags, int mask, struct statx *statxbuf);
 
 #endif //FLOAT_STDLIB_H
