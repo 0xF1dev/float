@@ -6,9 +6,13 @@ It supports standard routes, custom error pages and dynamic folder-based routes,
 
 Since it relies on Linux syscalls, other OSes aren't supported.
 
+**AI Usage:** AI was only used for basic C issues in the beginning (like how to make a syscall, as I've never programmed
+in C before), the rest was fully made by me.
+
 ## Building
 
 After cloning the repository, simply build with CMake:
+
 ```shell
 cmake -B build && cmake --build build
 ```
@@ -110,6 +114,7 @@ if it was a standard or error page, it gets sent back with the headers via a `wr
 ### Syscalls used
 
 Here is a list of all the syscalls Float uses:
+
 - `open`
 - `read`
 - `close`
